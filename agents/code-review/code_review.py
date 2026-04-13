@@ -18,8 +18,9 @@ from agentos import llm, returns, shell, timeout
 # ---------------------------------------------------------------------------
 
 # Absolute paths — skill may run from any cwd
-AGENTOS_ROOT = Path.home() / "dev" / "agentos"
-SDK_ROOT = Path.home() / "dev" / "agentos-sdk"
+WORKSPACE_ROOT = Path.home() / "dev" / "agentos"
+CORE_ROOT = WORKSPACE_ROOT / "core"
+DOCS_ROOT = WORKSPACE_ROOT / "docs"
 
 
 def _load_principles() -> tuple[str, str, str]:
@@ -29,9 +30,9 @@ def _load_principles() -> tuple[str, str, str]:
     scoring, and silent fallback (the old behavior) let a stale GUIDE.md
     path run unreviewed for an unknown window.
     """
-    engine_path = AGENTOS_ROOT / "principles.md"
-    sdk_path = SDK_ROOT / "docs" / "principles.md"
-    guide_path = SDK_ROOT / "docs" / "skills.md"
+    engine_path = CORE_ROOT / "principles.md"
+    sdk_path = DOCS_ROOT / "src" / "content" / "docs" / "principles.md"
+    guide_path = DOCS_ROOT / "src" / "content" / "docs" / "skills.md"
 
     missing = [
         f"{name} ({p})"
@@ -50,7 +51,7 @@ def _load_principles() -> tuple[str, str, str]:
 
 
 def _load_refactoring_specs() -> str:
-    specs_dir = AGENTOS_ROOT / "docs" / "specs" / "refactoring"
+    specs_dir = CORE_ROOT / "docs" / "specs" / "refactoring"
     if not specs_dir.exists():
         return ""
     parts = []
@@ -63,7 +64,7 @@ def _load_refactoring_specs() -> str:
 
 async def _load_arch() -> str:
     try:
-        result = await shell.run(str(AGENTOS_ROOT / "dev.sh"), args=["arch"], cwd=str(AGENTOS_ROOT))
+        result = await shell.run(str(CORE_ROOT / "dev.sh"), args=["arch"], cwd=str(CORE_ROOT))
         return result.get("stdout", "")
     except Exception:
         return ""
@@ -81,16 +82,16 @@ you let through makes the next fix harder.
 
 ## Cross-repo awareness
 
-The diff may include changes from multiple repos: agentos (engine, Rust), agentos-sdk
-(Python SDK), and agentos-community (skills, YAML+Python). Sections are labeled with
-their repo name and whether the change is staged (being committed) or uncommitted
-(work-in-progress in a sibling repo).
+The diff may include changes from multiple repos: core (engine, Rust), docs (shapes +
+SDK docs), skills (YAML + Python + `_sdk/`), and apps (TypeScript + `_sdk/`). Sections
+are labeled with their repo name and whether the change is staged (being committed) or
+uncommitted (work-in-progress in a sibling repo).
 
 Treat ALL changes holistically — this is one product with one team. Violations in
 uncommitted sibling repo code are just as blocking as violations in the staged commit.
 If an uncommitted skill has issues, flag them. If the staged commit is fine but a sibling
 repo has problems, still fail the review. The developer wants to keep everything clean
-across all three repos before any commit lands.
+across all repos before any commit lands.
 
 Write your review as markdown with this YAML frontmatter:
 

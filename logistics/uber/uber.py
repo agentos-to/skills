@@ -14,7 +14,7 @@ GRAPHQL_URL = "https://riders.uber.com/graphql"
 # Rides-specific headers merged via http.headers(extra=...).
 # ALWAYS use http.headers() for the base — it provides browser-grade UA, sec-ch-*,
 # and Sec-Fetch-* headers. Without these, some endpoints return 500.
-# See agentos-community/docs/skills/sdk.md for http.headers() docs.
+# See docs/src/content/docs/skills.md for http.headers() docs.
 RIDES_EXTRA_HEADERS = {
     "x-csrf-token": "x",
     "x-uber-rv-session-type": "desktop_session",
@@ -33,7 +33,7 @@ EATS_API_BASE = "https://www.ubereats.com/_p/api"
 # are needed for some endpoints (e.g. getReceiptByWorkflowUuidV1 returns 500 without them).
 # Use http.headers(waf="cf", accept="json") to get proper browser headers,
 # then merge Eats-specific headers via extra=.
-# See agentos-community/docs/skills/sdk.md for http.headers() docs.
+# See docs/src/content/docs/skills.md for http.headers() docs.
 EATS_EXTRA_HEADERS = {
     "x-csrf-token": "x",
 }
@@ -500,9 +500,9 @@ async def get_trip(trip_id: str, **params) -> dict:
 # ---------------------------------------------------------------------------
 # Eats helpers
 # ---------------------------------------------------------------------------
-# Eats API docs: agentos-community/skills/uber/requirements.md
-# E2E spec: docs/specs/uber-eats-e2e.md
-# Connection docs: agentos-community/docs/skills/connections.md
+# Eats API docs: skills/logistics/uber/requirements.md
+# E2E spec: core/docs/specs/uber-eats-e2e.md
+# Connection docs: docs/src/content/docs/connections.md
 # ---------------------------------------------------------------------------
 
 async def _eats_post(cookie_header: str, endpoint: str, body: dict | None = None) -> dict:

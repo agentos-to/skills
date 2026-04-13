@@ -1,6 +1,6 @@
-# AgentOS Community
+# AgentOS Skills
 
-Community skills and themes for [AgentOS](https://github.com/jcontini/agentOS-core).
+Community skills and themes for [AgentOS](https://github.com/agentos/core).
 
 ---
 
@@ -25,28 +25,28 @@ Browse `skills/` for all available skills.
 
 ## Documentation
 
-All developer documentation lives in the [agentOS SDK repo](https://github.com/jcontini/agent-sdk):
+All developer documentation lives in the [agentOS docs repo](https://github.com/agentos/docs):
 
 | What | Where |
 |------|-------|
-| **Skill development guide** | `agentos-sdk/docs/skills.md` |
-| **Shapes, connections, auth** | `agentos-sdk/docs/` |
-| **Reverse engineering** | `agentos-sdk/docs/reverse-engineering/` |
+| **Skill development guide** | `docs/src/content/docs/skills.md` |
+| **Shapes, connections, auth** | `docs/src/content/docs/` |
+| **Reverse engineering** | `docs/src/content/docs/reverse-engineering/` |
 | **Quick reference** | `agentos.to/skills.md` |
 
 ---
 
 ## Contributing
 
-**Anyone can contribute.** Found a bug? Want a new skill? Have an idea? [Open an issue](https://github.com/jcontini/agentos-community/issues).
+**Anyone can contribute.** Found a bug? Want a new skill? Have an idea? [Open an issue](https://github.com/agentos/skills/issues).
 
 ```bash
-git clone https://github.com/jcontini/agentos-community
-cd agentos-community
+git clone https://github.com/agentos/skills
+cd skills
 # Install the SDK once — it ships the validator used by pre-commit
-pip install -e ../agentos-sdk/skills-sdk
+pip install -e ./_sdk
 # Arm the pre-commit hook (runs validator + code review on every commit)
-git config core.hooksPath bin/git-hooks
+git config core.hooksPath ../bin/git-hooks
 ```
 
 Useful commands:

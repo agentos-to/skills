@@ -42,7 +42,7 @@ Cookie domain: `.ubereats.com` (separate connection from `.uber.com` rides — `
 **CRITICAL: Always use `http.headers(waf="cf", accept="json", extra={...})` for all requests.**
 The engine sets zero headers by default. Without browser-grade UA/sec-ch-* headers, some endpoints
 (notably `getReceiptByWorkflowUuidV1`) return 500. We are acting as Brave — send what Brave sends.
-See `agentos-community/docs/skills/sdk.md` for `http.headers()` documentation.
+See `docs/src/content/docs/skills.md` for `http.headers()` documentation.
 
 Required Eats-specific headers (pass via `extra=`):
 ```

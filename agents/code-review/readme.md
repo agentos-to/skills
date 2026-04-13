@@ -28,10 +28,10 @@ The evaluator reads these documents before scoring:
 
 | Source | What | When to apply |
 |--------|------|---------------|
-| `principles.md` | Engine principles — Rust is generic, templates do the work, etc. | Every Rust commit |
-| `agentos-sdk/docs/principles.md` | Shape principles — no counts, edges are verbs, etc. | Shape/ontology changes |
-| `agentos-sdk/docs/skills.md` | Skill SDK reference — how skills are built | Any skill/Python commit |
-| `docs/specs/refactoring/*.md` | Active refactoring specs — what's flagged for cleanup | Any commit touching flagged files |
+| `core/principles.md` | Engine principles — Rust is generic, templates do the work, etc. | Every Rust commit |
+| `docs/src/content/docs/principles.md` | Shape principles — no counts, edges are verbs, etc. | Shape/ontology changes |
+| `docs/src/content/docs/skills.md` | Skill SDK reference — how skills are built | Any skill/Python commit |
+| `core/docs/specs/refactoring/*.md` | Active refactoring specs — what's flagged for cleanup | Any commit touching flagged files |
 | `./dev.sh arch` output | Live crate/module sizes, dependency chain, largest files | Structural awareness |
 
 ## Tools

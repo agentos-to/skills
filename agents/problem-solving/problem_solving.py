@@ -24,20 +24,20 @@ from agentos import llm, progress, returns, shell, timeout
 # ── Paths ────────────────────────────────────────────────────────────────────
 
 def _find_repo_root() -> Path:
-    """Find the agentos repo root. Skill runs from engine cwd, which may be
+    """Find the core repo root. Skill runs from engine cwd, which may be
     anywhere. Prefer AGENTOS_REPO env var, else walk up from this file to find
-    the sibling `agentos` repo, else fall back to ~/dev/agentos."""
+    the sibling `core` repo, else fall back to ~/dev/agentos/core."""
     env = os.environ.get("AGENTOS_REPO")
     if env:
         return Path(env)
-    # This file is at agentos-community/skills/agents/problem-solving/problem_solving.py
-    # → parents: [problem-solving, agents, skills, agentos-community, dev]
+    # This file is at skills/agents/problem-solving/problem_solving.py
+    # → parents: [problem-solving, agents, skills, agentos]
     skill_dir = Path(__file__).resolve().parent
-    dev_root = skill_dir.parent.parent.parent.parent  # dev/
-    repo = dev_root / "agentos"
+    workspace = skill_dir.parent.parent.parent.parent  # agentos workspace root
+    repo = workspace / "core"
     if (repo / "_projects").exists():
         return repo
-    home = Path.home() / "dev" / "agentos"
+    home = Path.home() / "dev" / "agentos" / "core"
     if (home / "_projects").exists():
         return home
     return Path.cwd()

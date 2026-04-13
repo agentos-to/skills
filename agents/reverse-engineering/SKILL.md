@@ -102,10 +102,10 @@ is set — but don't rely on it. Be explicit.
 
 ## Primary Reference
 
-Full methodology in the community repo:
+Full methodology in the docs repo:
 
 ```
-~/dev/agentos-community/docs/reverse-engineering/
+~/dev/agentos/docs/src/content/docs/reverse-engineering/
 ├── overview.md              # Layer model, core principles
 ├── 1-transport/index.md     # TLS, headers, WAF bypass, http.headers() rules
 ├── 2-discovery/index.md     # JS bundle scanning, GraphQL schema, Apollo cache
@@ -119,14 +119,10 @@ Full methodology in the community repo:
 Skill authoring docs:
 
 ```
-~/dev/agentos-community/docs/skills/
-├── anatomy.md        # Skill folder structure, YAML shape
-├── connections.md    # Auth types, cookie format, provider selection
-├── python.md         # Python executor, _call dispatch
-├── operations.md     # Operation naming, capabilities
-├── sdk.md            # http module, headers(), sessions, cookie jar
-├── shapes.md         # Shape design principles, validation
-└── testing.md        # Test patterns
+~/dev/agentos/docs/src/content/docs/
+├── skills.md           # Skill authoring guide (anatomy, python, operations, sdk, testing)
+├── connections.md      # Auth types, cookie format, provider selection
+└── shapes.md           # Shape design principles, validation
 ```
 
 **Read these before starting.** Especially `sdk.md` for HTTP patterns and
