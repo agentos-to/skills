@@ -9,6 +9,32 @@ Living doc. If you're an agent picking this skill up after compaction,
 **read this first**. It captures what the previous session learned so
 you don't have to relearn it.
 
+## Known bugs
+
+### Silent login-redirect on `/review/list/`
+
+`list_books` / `list_reviews` / `list_shelf_books` all return `[]` when
+Goodreads redirects to `/user/sign_in`. The `/review/list/` endpoint
+requires stronger auth than the homepage — `check_session` succeeds
+but `/review/list/` serves the sign-in page with 200 OK. `_require_login`
+only raises on page 1 of the auto-paginate loop, after parsing. When
+page 1 is the sign-in HTML (no `bookalike` rows, no next-page), the
+loop silently `break`s with empty results.
+
+**Fix both sides.**
+
+1. Move `_require_login` before the parse, and run it every page,
+   not only page 1 — so a mid-pagination session death surfaces as
+   `SESSION_EXPIRED` instead of a truncated list.
+2. Figure out why `/review/list/` needs a different cookie set than
+   `/`. Probably missing `_session_id2` or an HttpOnly cookie the
+   Brave decrypter isn't extracting. Check `Set-Cookie` from a full
+   browser session vs what the cookie provider returns.
+
+**Repro.** `list_shelves` reports 72 read + 8 currently-reading + 221
+to-read; `list_books` returns 0 for every shelf. HTML dumped to
+/tmp during debug showed `<title>Sign in</title>`.
+
 ## Open work
 
 This skill's remaining friction is now captured as engine-level projects
