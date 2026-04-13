@@ -6,6 +6,11 @@ name: macOS Control
 description: "Inspect macOS apps, processes, displays, windows, screenshots, and filesystem with built-in system tools"
 color: "#111827"
 website: "https://www.apple.com/macos/"
+
+test:
+  list_processes: { params: { limit: 5 } }
+  list_displays: {}
+  list_directory: { params: { path: "/etc" } }
 ---
 
 # macOS Control
