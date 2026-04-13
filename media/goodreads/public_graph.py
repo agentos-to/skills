@@ -12,10 +12,6 @@ from agentos import http, molt, connection, provides, returns, timeout, web_read
 
 USER_AGENT = "Mozilla/5.0 (compatible; AgentOS/1.0)"
 BASE_URL = "https://www.goodreads.com"
-FALLBACK_GRAPHQL_ENDPOINT = (
-    "https://kxbwmqov6jgg3daaamb744ycu4.appsync-api.us-east-1.amazonaws.com/graphql"
-)
-FALLBACK_GRAPHQL_API_KEY = "REDACTED_API_KEY"
 APPSYNC_ENDPOINT_RE = re.compile(
     r'"graphql":\{"apiKey":"(da2-[a-z0-9]+)","endpoint":"(https://[a-z0-9]+\.appsync-api\.[a-z0-9-]+\.amazonaws\.com/graphql)"'
 )
@@ -174,7 +170,8 @@ def _discover_runtime(
 ) -> tuple[dict[str, Any], bool]:
     """Resolve AppSync transport config.
 
-    Priority: graph cache → JS bundle extraction → browser capture → hardcoded fallback.
+    Priority: graph cache → JS bundle extraction → browser capture. No fallback —
+    fail loudly if the bundle shape changes so we notice and fix the extractor.
     Returns (runtime, was_cached) — callers use was_cached to decide whether to
     write back via __cache__.
     """
@@ -191,19 +188,80 @@ def _discover_runtime(
             return runtime, False
 
     if page_url:
-        try:
-            html_text = _fetch_html(page_url)
-            runtime = _discover_from_bundle(html_text)
-            if runtime:
-                return runtime, False
-        except Exception:
-            pass
+        html_text = _fetch_html(page_url)
+        runtime = _discover_from_bundle(html_text)
+        if runtime:
+            return runtime, False
 
-    return _make_runtime(
-        FALLBACK_GRAPHQL_ENDPOINT,
-        FALLBACK_GRAPHQL_API_KEY,
-        "hardcoded_fallback",
-    ), False
+    raise RuntimeError(
+        "Goodreads AppSync config discovery failed — the _app bundle shape may "
+        "have changed. Update APP_BUNDLE_RE / APPSYNC_ENDPOINT_RE in public_graph.py."
+    )
+
+
+async def _async_fetch(url: str, *, accept: str = "html") -> str:
+    """Async twin of _fetch_url, used only by public_authenticate.
+
+    The rest of this file is sync (broken — see TODO at top of file).
+    Once the skill is fully converted to async, this collapses back into
+    _fetch_url and the sync helpers go away.
+    """
+    import asyncio
+    last_error = None
+    for attempt in range(4):
+        kwargs = {**http.headers(waf="cf", mode="navigate", accept=accept), "timeout": 30}
+        try:
+            resp = await http.get(url, **kwargs)
+            if resp.get("ok"):
+                return resp.get("body", "")
+            status = resp.get("status", 0)
+            last_error = RuntimeError(f"HTTP {status}")
+            if status not in {429, 500, 502, 503, 504} or attempt == 3:
+                raise last_error
+        except RuntimeError:
+            if attempt == 3:
+                raise
+        await asyncio.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"Failed Goodreads request: {last_error}")
+
+
+@returns("void")
+async def public_authenticate(*, page_url: str = "", **params) -> dict[str, Any]:
+    """Fetch the public AppSync endpoint + x-api-key by scraping the live JS bundle.
+
+    "Public" because the key is the one Goodreads embeds in their own browser
+    bundle — same value every unauthenticated visitor receives. We never ship
+    it hardcoded; we re-read it fresh every time so the skill survives their
+    next redeploy. Raises RuntimeError if discovery fails.
+
+    Args:
+        page_url: Goodreads page URL to scrape (default: a known book page)
+    """
+    target = page_url or f"{BASE_URL}/book/show/1"
+    html_text = await _async_fetch(target, accept="html")
+    bundle_match = APP_BUNDLE_RE.search(html_text)
+    if not bundle_match:
+        raise RuntimeError(
+            "Goodreads AppSync config discovery failed — the _app bundle "
+            "reference is missing from the page HTML. Update APP_BUNDLE_RE."
+        )
+    bundle_js = await _async_fetch(f"{BASE_URL}{bundle_match.group()}", accept="any")
+    configs: list[tuple[str, str, str]] = []
+    for m in APPSYNC_ENDPOINT_RE.finditer(bundle_js):
+        tail = bundle_js[m.end() : m.end() + 200]
+        name_match = re.search(r'"shortName":"([^"]+)"', tail)
+        short_name = name_match.group(1) if name_match else ""
+        configs.append((short_name, m.group(1), m.group(2)))
+    prod = next(((k, e) for n, k, e in configs if n == "Prod"), None)
+    if prod:
+        return _make_runtime(prod[1], prod[0], "js_bundle_discovery")
+    if configs:
+        _, api_key, endpoint = configs[-1]
+        return _make_runtime(endpoint, api_key, "js_bundle_discovery")
+    raise RuntimeError(
+        "Goodreads AppSync config discovery failed — no graphql config found "
+        "in bundle. Update APPSYNC_ENDPOINT_RE in public_graph.py."
+    )
 
 
 def _wrap_result(result: Any, runtime: dict[str, Any], was_cached: bool) -> Any:

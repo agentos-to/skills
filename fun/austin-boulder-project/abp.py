@@ -24,18 +24,11 @@ WIDGETS_API = "https://widgets.api.prod.tilefive.com"
 COGNITO_REGION = "us-east-1"
 COGNITO_ENDPOINT = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/"
 
-# Fallback config — extracted from the app bundle (see _discover_config()).
-# These rotate when Tilefive redeploys; _discover_config() fetches fresh values.
-# Format reference: widgetsApiKey ~40 chars, userPoolId "us-east-1_XXXXXXXX"
-FALLBACK_WIDGETS_API_KEY    = "REDACTED_API_KEY"
-FALLBACK_COGNITO_POOL_ID    = "us-east-1_x871NwuXM"
-FALLBACK_COGNITO_CLIENT_ID  = "jikhc095m6r9olu8rudg4gh5d"
-
 # Runtime cache for discovered config (avoids re-fetching the bundle every call)
 _CONFIG_CACHE: dict | None = None
 
 # Regex patterns for bundle extraction (see requirements.md for full context)
-_RE_BUNDLE_URL      = re.compile(r'src="/assets/(app-[a-zA-Z0-9]+\.js)"')
+_RE_BUNDLE_URL      = re.compile(r'src="/assets/(app-[A-Za-z0-9_-]+\.js)"')
 _RE_WIDGETS_KEY     = re.compile(r'widgetsApiKey:\{"us-east-1":"([^"]{30,})"')
 _RE_POOL_ID         = re.compile(r'userPoolId:"(us-east-1_[A-Za-z0-9]+)"')
 _RE_CLIENT_ID       = re.compile(r'userPoolClientId:"([A-Za-z0-9]{20,60})"')
@@ -149,12 +142,10 @@ async def _discover_config(force: bool = False) -> dict:
     How it works:
       1. Fetch the portal HTML → find the bundle URL (app-HASH.js)
       2. Fetch the bundle → regex-extract the three values
-      3. Cache result in-process; return fallbacks on any failure
+      3. Cache result in-process
 
-    The bundle is served same-origin by Tilefive's CDN and may refuse direct
-    fetches from outside a browser context. If step 2 fails, fallback constants
-    are returned (see FALLBACK_* at the top of this file). They're good until
-    Tilefive redeploys with new keys.
+    No fallback — if extraction fails we raise so the regex/bundle shape drift
+    gets noticed and fixed, rather than masked by stale hardcoded values.
 
     See requirements.md → "CORS / API Key" for the full extraction rationale.
     """
@@ -162,49 +153,64 @@ async def _discover_config(force: bool = False) -> dict:
     if _CONFIG_CACHE and not force:
         return _CONFIG_CACHE
 
-    fallback = {
-        "widgetsApiKey":   FALLBACK_WIDGETS_API_KEY,
-        "cognitoPoolId":   FALLBACK_COGNITO_POOL_ID,
-        "cognitoClientId": FALLBACK_COGNITO_CLIENT_ID,
+    html = await _request(PORTAL_ORIGIN)
+    if isinstance(html, (bytes, bytearray)):
+        html = html.decode("utf-8", errors="replace")
+    m = _RE_BUNDLE_URL.search(html or "")
+    if not m:
+        raise RuntimeError(
+            "ABP config discovery failed: portal HTML has no app-*.js bundle "
+            "reference. _RE_BUNDLE_URL may need updating."
+        )
+    bundle_url = f"{PORTAL_ORIGIN}/assets/{m.group(1)}"
+
+    bundle = await _request(bundle_url, headers={
+        "Referer": f"{PORTAL_ORIGIN}/",
+        "Origin": PORTAL_ORIGIN,
+    })
+    if isinstance(bundle, (bytes, bytearray)):
+        bundle = bundle.decode("utf-8", errors="replace")
+    if not isinstance(bundle, str) or bundle.lstrip().startswith("<!"):
+        raise RuntimeError(
+            f"ABP config discovery failed: CDN returned non-JS for {bundle_url} "
+            "(likely blocked non-browser origin)."
+        )
+
+    km = _RE_WIDGETS_KEY.search(bundle)
+    pm = _RE_POOL_ID.search(bundle)
+    cm = _RE_CLIENT_ID.search(bundle)
+    if not (km and pm and cm):
+        missing = [n for n, v in [("widgetsApiKey", km), ("cognitoPoolId", pm), ("cognitoClientId", cm)] if not v]
+        raise RuntimeError(
+            f"ABP config discovery failed: bundle is missing {missing}. "
+            "Regex patterns (_RE_WIDGETS_KEY / _RE_POOL_ID / _RE_CLIENT_ID) may need updating."
+        )
+
+    config = {
+        "widgetsApiKey":   km.group(1),
+        "cognitoPoolId":   pm.group(1),
+        "cognitoClientId": cm.group(1),
     }
+    _CONFIG_CACHE = config
+    return config
 
-    try:
-        # Step 1: get the portal HTML and find the bundle filename
-        html = await _request(PORTAL_ORIGIN)
-        if isinstance(html, (bytes, bytearray)):
-            html = html.decode("utf-8", errors="replace")
-        m = _RE_BUNDLE_URL.search(html or "")
-        if not m:
-            return fallback
-        bundle_url = f"{PORTAL_ORIGIN}/assets/{m.group(1)}"
 
-        # Step 2: fetch the bundle (may fail if CDN blocks non-browser origin)
-        bundle = await _request(bundle_url, headers={
-            "Referer": f"{PORTAL_ORIGIN}/",
-            "Origin": PORTAL_ORIGIN,
-        })
-        if isinstance(bundle, (bytes, bytearray)):
-            bundle = bundle.decode("utf-8", errors="replace")
-        if not isinstance(bundle, str):
-            return fallback
+@returns("void")
+async def public_authenticate(*, force: bool = False, **params) -> dict:
+    """Fetch the public Tilefive widgets/Cognito config from the live app bundle.
 
-        # If the CDN returned HTML instead of JS, fall back
-        if bundle.lstrip().startswith("<!"):
-            return fallback
+    "Public" because these values are embedded in the portal's own JS bundle —
+    same values every unauthenticated visitor sees. We never ship them
+    hardcoded; re-reading them fresh means the skill survives Tilefive's next
+    redeploy.
 
-        config = dict(fallback)
-        if km := _RE_WIDGETS_KEY.search(bundle):
-            config["widgetsApiKey"] = km.group(1)
-        if pm := _RE_POOL_ID.search(bundle):
-            config["cognitoPoolId"] = pm.group(1)
-        if cm := _RE_CLIENT_ID.search(bundle):
-            config["cognitoClientId"] = cm.group(1)
+    Raises RuntimeError if discovery fails (bundle shape drift, CDN block, etc.)
+    so we notice and update the extractor rather than silently breaking.
 
-        _CONFIG_CACHE = config
-        return config
-
-    except Exception:
-        return fallback
+    Args:
+        force: Re-fetch even if runtime cache is populated
+    """
+    return await _discover_config(force=bool(force))
 
 
 async def _widgets_headers(access_token: str | None = None) -> dict:
