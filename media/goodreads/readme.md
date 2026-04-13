@@ -31,6 +31,7 @@ test:
   check_session:
     skip: true
   get_person:
+    account: '26631647'
     params:
       user_id: '26631647'
   search_people:
@@ -42,29 +43,36 @@ test:
   list_books:
     skip: true
   get_book:
+    account: '26631647'
     params:
       book_id: '4934'
   list_book_reviews:
+    account: '26631647'
     params:
       book_id: '4934'
       limit: 5
   list_similar_books:
+    account: '26631647'
     params:
       book_id: '4934'
       limit: 5
   list_series_books:
+    account: '26631647'
     params:
       book_id: '4934'
       limit: 5
   search_books:
+    account: '26631647'
     params:
       query: Brothers Karamazov
       limit: 3
   get_author:
+    account: '26631647'
     params:
       author_id: '3137322'
       limit: 3
   list_author_books:
+    account: '26631647'
     params:
       author_id: '3137322'
       limit: 3
@@ -263,3 +271,14 @@ This makes a mixed reverse-engineering approach the most reliable path today:
 - targeted HTML parsing for older pages
 - JS bundle extraction for transport config (endpoint, API key)
 - authenticated cookie-backed expansion for private shelves, feed, and social views
+
+## TODO
+
+- Account registration by email identity (not numeric ID). Today the
+  engine registers Goodreads cookies under the scraped user_id
+  (`26631647`) or `default` when the ID isn't visible. Should key on
+  the logged-in email (`goodreads@contini.co`), resolved via
+  `check_session`. Blocks making `test:` params hardcode-free.
+- `@test` decorator in the SDK to replace the readme `test:` block.
+  AST-read, same surface, no runtime import. Covers this skill and
+  macos-control as the migration reference.

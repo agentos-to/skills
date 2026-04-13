@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
+import asyncio
 import html
 import json
 import re
-import sys
-import time
 from typing import Any
 
 from agentos import http, molt, connection, provides, returns, timeout, web_read, clean_html, iso_from_ms, parse_int
@@ -18,39 +17,43 @@ APPSYNC_ENDPOINT_RE = re.compile(
 APP_BUNDLE_RE = re.compile(r'/_next/static/chunks/pages/_app-[a-f0-9]+\.js')
 
 
-def _fetch_html(url: str) -> str:
-    return _fetch_url(url, extra_headers={"Cache-Control": "no-cache", "Pragma": "no-cache"}, accept="html")
+async def _fetch_html(url: str) -> str:
+    return await _fetch_url(url, extra_headers={"Cache-Control": "no-cache", "Pragma": "no-cache"}, accept="html")
 
 
-def _fetch_url(
+async def _fetch_url(
     url: str,
     *,
     extra_headers: dict[str, str] | None = None,
     accept: str = "any",
-    data: str | None = None,
-    method: str | None = None,
+    json_body: dict[str, Any] | None = None,
 ) -> str:
     last_error = None
-    request_method = method or ("POST" if data is not None else "GET")
-    dispatch = {"GET": http.get, "POST": http.post, "PUT": http.put, "DELETE": http.delete}
-    fn = dispatch.get(request_method, http.get)
+    is_post = json_body is not None
+    fn = http.post if is_post else http.get
 
     for attempt in range(4):
-        kwargs = {**http.headers(waf="cf", mode="navigate", accept=accept, extra=extra_headers), "timeout": 30}
-        if data is not None:
-            kwargs["data"] = data
+        header_kwargs = (
+            {"accept": "json", "extra": extra_headers}
+            if is_post
+            else {"waf": "cf", "mode": "navigate", "accept": accept, "extra": extra_headers}
+        )
+        kwargs = {**http.headers(**header_kwargs), "timeout": 30}
+        if is_post:
+            kwargs["json"] = json_body
         try:
-            resp = fn(url, **kwargs)
+            resp = await fn(url, **kwargs)
             if resp.get("ok"):
                 return resp.get("body", "")
             status = resp.get("status", 0)
-            last_error = RuntimeError(f"HTTP {status}")
+            body_preview = (resp.get("body") or "")[:500]
+            last_error = RuntimeError(f"HTTP {status}: {body_preview}")
             if status not in {429, 500, 502, 503, 504} or attempt == 3:
                 raise last_error
         except RuntimeError:
             if attempt == 3:
                 raise
-        time.sleep(1.5 * (attempt + 1))
+        await asyncio.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"Failed Goodreads request: {last_error}")
 
 
@@ -122,7 +125,7 @@ def _make_runtime(endpoint: str, api_key: str, source: str) -> dict[str, Any]:
     }
 
 
-def _discover_from_bundle(html_text: str) -> dict[str, Any] | None:
+async def _discover_from_bundle(html_text: str) -> dict[str, Any] | None:
     """Extract AppSync config from the Next.js _app JS bundle.
 
     Goodreads ships environment configs (Dev, Beta, Preprod, Prod) as inline
@@ -135,7 +138,7 @@ def _discover_from_bundle(html_text: str) -> dict[str, Any] | None:
         return None
 
     try:
-        bundle_js = _fetch_url(
+        bundle_js = await _fetch_url(
             f"{BASE_URL}{bundle_match.group()}",
         )
     except Exception:
@@ -162,7 +165,7 @@ def _discover_from_bundle(html_text: str) -> dict[str, Any] | None:
     return None
 
 
-def _discover_runtime(
+async def _discover_runtime(
     *,
     html_text: str | None = None,
     page_url: str | None = None,
@@ -183,13 +186,13 @@ def _discover_runtime(
         ), True
 
     if html_text:
-        runtime = _discover_from_bundle(html_text)
+        runtime = await _discover_from_bundle(html_text)
         if runtime:
             return runtime, False
 
     if page_url:
-        html_text = _fetch_html(page_url)
-        runtime = _discover_from_bundle(html_text)
+        html_text = await _fetch_html(page_url)
+        runtime = await _discover_from_bundle(html_text)
         if runtime:
             return runtime, False
 
@@ -197,32 +200,6 @@ def _discover_runtime(
         "Goodreads AppSync config discovery failed — the _app bundle shape may "
         "have changed. Update APP_BUNDLE_RE / APPSYNC_ENDPOINT_RE in public_graph.py."
     )
-
-
-async def _async_fetch(url: str, *, accept: str = "html") -> str:
-    """Async twin of _fetch_url, used only by public_authenticate.
-
-    The rest of this file is sync (broken — see TODO at top of file).
-    Once the skill is fully converted to async, this collapses back into
-    _fetch_url and the sync helpers go away.
-    """
-    import asyncio
-    last_error = None
-    for attempt in range(4):
-        kwargs = {**http.headers(waf="cf", mode="navigate", accept=accept), "timeout": 30}
-        try:
-            resp = await http.get(url, **kwargs)
-            if resp.get("ok"):
-                return resp.get("body", "")
-            status = resp.get("status", 0)
-            last_error = RuntimeError(f"HTTP {status}")
-            if status not in {429, 500, 502, 503, 504} or attempt == 3:
-                raise last_error
-        except RuntimeError:
-            if attempt == 3:
-                raise
-        await asyncio.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(f"Failed Goodreads request: {last_error}")
 
 
 @returns("void")
@@ -238,30 +215,8 @@ async def public_authenticate(*, page_url: str = "", **params) -> dict[str, Any]
         page_url: Goodreads page URL to scrape (default: a known book page)
     """
     target = page_url or f"{BASE_URL}/book/show/1"
-    html_text = await _async_fetch(target, accept="html")
-    bundle_match = APP_BUNDLE_RE.search(html_text)
-    if not bundle_match:
-        raise RuntimeError(
-            "Goodreads AppSync config discovery failed — the _app bundle "
-            "reference is missing from the page HTML. Update APP_BUNDLE_RE."
-        )
-    bundle_js = await _async_fetch(f"{BASE_URL}{bundle_match.group()}", accept="any")
-    configs: list[tuple[str, str, str]] = []
-    for m in APPSYNC_ENDPOINT_RE.finditer(bundle_js):
-        tail = bundle_js[m.end() : m.end() + 200]
-        name_match = re.search(r'"shortName":"([^"]+)"', tail)
-        short_name = name_match.group(1) if name_match else ""
-        configs.append((short_name, m.group(1), m.group(2)))
-    prod = next(((k, e) for n, k, e in configs if n == "Prod"), None)
-    if prod:
-        return _make_runtime(prod[1], prod[0], "js_bundle_discovery")
-    if configs:
-        _, api_key, endpoint = configs[-1]
-        return _make_runtime(endpoint, api_key, "js_bundle_discovery")
-    raise RuntimeError(
-        "Goodreads AppSync config discovery failed — no graphql config found "
-        "in bundle. Update APPSYNC_ENDPOINT_RE in public_graph.py."
-    )
+    runtime, _was_cached = await _discover_runtime(page_url=target)
+    return runtime
 
 
 def _wrap_result(result: Any, runtime: dict[str, Any], was_cached: bool) -> Any:
@@ -279,7 +234,7 @@ def _wrap_result(result: Any, runtime: dict[str, Any], was_cached: bool) -> Any:
     }
 
 
-def _graphql_request(
+async def _graphql_request(
     query: str,
     variables: dict[str, Any],
     runtime: dict[str, Any],
@@ -290,12 +245,10 @@ def _graphql_request(
     headers = dict(runtime["headers"])
     if extra_headers:
         headers.update(extra_headers)
-    payload = json.dumps({"query": query, "variables": variables})
-    body = _fetch_url(
+    body = await _fetch_url(
         runtime["graphqlEndpoint"],
         extra_headers=headers,
-        data=payload,
-        method="POST",
+        json_body={"query": query, "variables": variables},
     )
     parsed = json.loads(body)
     errors = parsed.get("errors") or []
@@ -318,9 +271,9 @@ query getViewer {
 """.strip()
 
 
-def _get_viewer(runtime: dict[str, Any], cookie_header: str) -> dict[str, Any]:
+async def _get_viewer(runtime: dict[str, Any], cookie_header: str) -> dict[str, Any]:
     """Fetch the current viewer (logged-in user) via GraphQL with session cookies."""
-    data = _graphql_request(
+    data = await _graphql_request(
         GET_VIEWER_QUERY,
         {},
         runtime,
@@ -329,9 +282,9 @@ def _get_viewer(runtime: dict[str, Any], cookie_header: str) -> dict[str, Any]:
     return (data.get("getViewer") or {}) if isinstance(data, dict) else {}
 
 
-def _load_book_page(book_id: str) -> dict[str, Any]:
+async def _load_book_page(book_id: str) -> dict[str, Any]:
     url = f"{BASE_URL}/book/show/{book_id}"
-    html_text = _fetch_html(url)
+    html_text = await _fetch_html(url)
     next_data = _extract_next_data(html_text)
     page_props = next_data.get("props", {}).get("pageProps", {}) or {}
     apollo = page_props.get("apolloState", {}) or {}
@@ -548,12 +501,12 @@ def _simple_book(book_id: Any, title: str | None, cover_url: str | None,
     return result
 
 
-def _get_public_book(book_id: str) -> dict[str, Any]:
-    return _map_book_payload(_load_book_page(book_id))
+async def _get_public_book(book_id: str) -> dict[str, Any]:
+    return _map_book_payload(await _load_book_page(book_id))
 
 
-def _list_book_reviews(book_id: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
-    page = _load_book_page(book_id)
+async def _list_book_reviews(book_id: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
+    page = await _load_book_page(book_id)
     work = page["work"] or {}
     work_id = work.get("id")
     apollo = page["apollo"]
@@ -611,8 +564,8 @@ query getReviews($filters: BookReviewsFilterInput!, $pagination: PaginationInput
   }
 }
 """.strip()
-    runtime, was_cached = _discover_runtime(html_text=page["html"], page_url=page["url"], cache=cache)
-    data = _graphql_request(
+    runtime, was_cached = await _discover_runtime(html_text=page["html"], page_url=page["url"], cache=cache)
+    data = await _graphql_request(
         query,
         {
             "filters": {"resourceType": "WORK", "resourceId": work_id},
@@ -625,8 +578,8 @@ query getReviews($filters: BookReviewsFilterInput!, $pagination: PaginationInput
     return _wrap_result(reviews, runtime, was_cached)
 
 
-def _list_similar_books(book_id: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
-    page = _load_book_page(book_id)
+async def _list_similar_books(book_id: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
+    page = await _load_book_page(book_id)
     book = page["book"]
     query = """
 query getSimilarBooks($id: ID!, $limit: Int!) {
@@ -652,8 +605,8 @@ query getSimilarBooks($id: ID!, $limit: Int!) {
   }
 }
 """.strip()
-    runtime, was_cached = _discover_runtime(html_text=page["html"], page_url=page["url"], cache=cache)
-    data = _graphql_request(query, {"id": book.get("id"), "limit": limit}, runtime)
+    runtime, was_cached = await _discover_runtime(html_text=page["html"], page_url=page["url"], cache=cache)
+    data = await _graphql_request(query, {"id": book.get("id"), "limit": limit}, runtime)
     edges = (((data.get("getSimilarBooks") or {}).get("edges")) or [])
     books = []
     for edge in edges:
@@ -673,7 +626,7 @@ query getSimilarBooks($id: ID!, $limit: Int!) {
     return _wrap_result(books, runtime, was_cached)
 
 
-def _search_books(query: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
+async def _search_books(query: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
     """Search books via the public AppSync getSearchSuggestions endpoint."""
     gql = """
 query getSearchSuggestions($searchQuery: String!) {
@@ -694,8 +647,8 @@ query getSearchSuggestions($searchQuery: String!) {
   }
 }
 """.strip()
-    runtime, was_cached = _discover_runtime(page_url=f"{BASE_URL}/book/show/1", cache=cache)
-    data = _graphql_request(gql, {"searchQuery": query}, runtime)
+    runtime, was_cached = await _discover_runtime(page_url=f"{BASE_URL}/book/show/1", cache=cache)
+    data = await _graphql_request(gql, {"searchQuery": query}, runtime)
     edges = (((data.get("getSearchSuggestions") or {}).get("edges")) or [])
     books = []
     for edge in edges[:limit]:
@@ -716,9 +669,9 @@ query getSearchSuggestions($searchQuery: String!) {
     return _wrap_result(books, runtime, was_cached)
 
 
-def _list_series_books(book_id: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
+async def _list_series_books(book_id: str, limit: int, cache: dict[str, Any] | None = None) -> Any:
     """List all books in a series, given any book_id that belongs to a series."""
-    page = _load_book_page(book_id)
+    page = await _load_book_page(book_id)
     apollo = page["apollo"]
     book = page["book"]
 
@@ -751,8 +704,8 @@ query getWorksForSeries($input: GetWorksForSeriesInput!, $pagination: Pagination
   }
 }
 """.strip()
-    runtime, was_cached = _discover_runtime(html_text=page["html"], page_url=page["url"], cache=cache)
-    data = _graphql_request(gql, {"input": {"id": series_id}, "pagination": {"limit": limit}}, runtime)
+    runtime, was_cached = await _discover_runtime(html_text=page["html"], page_url=page["url"], cache=cache)
+    data = await _graphql_request(gql, {"input": {"id": series_id}, "pagination": {"limit": limit}}, runtime)
     edges = (((data.get("getWorksForSeries") or {}).get("edges")) or [])
     books = []
     for edge in edges:
@@ -858,8 +811,8 @@ def _parse_profile_currently_reading(html_text: str, limit: int) -> list[dict[st
     return _unique_by(books, "book_id")
 
 
-def _get_public_profile(user_id: str, limit: int) -> dict[str, Any]:
-    html_text = _fetch_html(f"{BASE_URL}/user/show/{user_id}")
+async def _get_public_profile(user_id: str, limit: int) -> dict[str, Any]:
+    html_text = await _fetch_html(f"{BASE_URL}/user/show/{user_id}")
     title = molt(_first_match(r"<title>(.*?)</title>", html_text)) or ""
     title_match = re.match(r"^(.*?) \((.*?)\) - (.*?) \(([\d,]+) books\)$", title)
     name = clean_html(_first_match(r'<h1 id="profileNameTopHeading"[^>]*>(.*?)</h1>', html_text))
@@ -899,8 +852,8 @@ def _get_public_profile(user_id: str, limit: int) -> dict[str, Any]:
     return result
 
 
-def _parse_author_books(author_id: str, limit: int) -> list[dict[str, Any]]:
-    html_text = _fetch_html(f"{BASE_URL}/author/list/{author_id}")
+async def _parse_author_books(author_id: str, limit: int) -> list[dict[str, Any]]:
+    html_text = await _fetch_html(f"{BASE_URL}/author/list/{author_id}")
     books = []
     pattern = re.compile(
         r'<tr itemscope itemtype="http://schema.org/Book">.*?'
@@ -928,9 +881,9 @@ def _parse_author_books(author_id: str, limit: int) -> list[dict[str, Any]]:
     return _unique_by(books, "book_id")
 
 
-def _get_public_author(author_id: str, limit: int) -> dict[str, Any]:
-    html_text = _fetch_html(f"{BASE_URL}/author/show/{author_id}")
-    author_list_html = _fetch_html(f"{BASE_URL}/author/list/{author_id}")
+async def _get_public_author(author_id: str, limit: int) -> dict[str, Any]:
+    html_text = await _fetch_html(f"{BASE_URL}/author/show/{author_id}")
+    author_list_html = await _fetch_html(f"{BASE_URL}/author/list/{author_id}")
     name = clean_html(_first_match(r'<h1[^>]*>\s*(?:<span itemprop="name">)?(.*?)(?:</span>)?\s*</h1>', html_text))
     bio = clean_html(_first_match(rf'<span id="freeTextContainerauthor{author_id}">(.*?)</span>', html_text))
     location = clean_html(_first_match(r'<div class="dataTitle">Born</div>\s*(.*?)\s*<br class="clear"/>', html_text))
@@ -960,7 +913,7 @@ def _get_public_author(author_id: str, limit: int) -> dict[str, Any]:
         "memberSince": member_since,
         "followersCount": followers_count,
     }
-    books = _parse_author_books(author_id, limit)
+    books = await _parse_author_books(author_id, limit)
     if books:
         result["books"] = books
     return result
@@ -992,20 +945,20 @@ def _extract_id_from_url(params: dict | None, url_key: str, id_key: str, pattern
 @returns("account")
 @connection("graphql")
 @timeout(15)
-async def run_get_profile(*, user_id: str = "", limit: int = 10, **params) -> dict[str, Any]:
+async def get_profile(*, user_id: str = "", limit: int = 10, **params) -> dict[str, Any]:
     """Get a public Goodreads profile and import bounded public relationships like favorite books, currently reading, and shelves
 
         Args:
             user_id: User ID (e.g., '26631647')
             limit: Max related books or shelves to import per profile section
         """
-    return _get_public_profile(user_id=str(user_id), limit=int(limit))
+    return await _get_public_profile(user_id=str(user_id), limit=int(limit))
 
 
 @returns("book")
 @provides(web_read, urls=["goodreads.com/book/show/*", "www.goodreads.com/book/show/*"])
 @connection("graphql")
-async def run_get_book(*, book_id: str = "", url: str = "", **params) -> dict[str, Any]:
+async def get_book(*, book_id: str = "", url: str = "", **params) -> dict[str, Any]:
     """Get structured public book details from Goodreads hydration and Apollo state
 
         Args:
@@ -1016,62 +969,62 @@ async def run_get_book(*, book_id: str = "", url: str = "", **params) -> dict[st
         m = re.search(r"/book/show/(\d+)", url)
         if m:
             book_id = m.group(1)
-    return _get_public_book(str(book_id))
+    return await _get_public_book(str(book_id))
 
 
 @returns("review[]")
 @connection("graphql")
-async def run_list_book_reviews(*, book_id: str = "", limit: int = 30, **params) -> Any:
+async def list_book_reviews(*, book_id: str = "", limit: int = 30, **params) -> Any:
     """List public Goodreads reviews for a book via the AppSync GraphQL backend
 
         Args:
             book_id: Book ID
             limit: Max reviews to return
         """
-    return _list_book_reviews(book_id=str(book_id), limit=int(limit))
+    return await _list_book_reviews(book_id=str(book_id), limit=int(limit))
 
 
 @returns("book[]")
 @connection("graphql")
-async def run_list_similar_books(*, book_id: str = "", limit: int = 20, **params) -> Any:
+async def list_similar_books(*, book_id: str = "", limit: int = 20, **params) -> Any:
     """List similar books from Goodreads' public AppSync GraphQL backend
 
         Args:
             book_id: Book ID
             limit: Max similar books to return
         """
-    return _list_similar_books(book_id=str(book_id), limit=int(limit))
+    return await _list_similar_books(book_id=str(book_id), limit=int(limit))
 
 
 @returns("book[]")
 @connection("graphql")
-async def run_list_series_books(*, book_id: str = "", limit: int = 20, **params) -> Any:
+async def list_series_books(*, book_id: str = "", limit: int = 20, **params) -> Any:
     """List all books in a series, given any book that belongs to it
 
         Args:
             book_id: Book ID of any book in the series
             limit: Max books to return
         """
-    return _list_series_books(book_id=str(book_id), limit=int(limit))
+    return await _list_series_books(book_id=str(book_id), limit=int(limit))
 
 
 @returns("book[]")
 @connection("graphql")
 @timeout(15)
-async def run_search_books(*, query: str = "", limit: int = 10, **params) -> Any:
+async def search_books(*, query: str = "", limit: int = 10, **params) -> Any:
     """Search for books by title, author, or ISBN via the public AppSync GraphQL backend
 
         Args:
             query: Search query (title, author, or ISBN)
             limit: Max results
         """
-    return _search_books(query=str(query), limit=int(limit))
+    return await _search_books(query=str(query), limit=int(limit))
 
 
 @returns("person")
 @provides(web_read, urls=["goodreads.com/author/show/*", "www.goodreads.com/author/show/*"])
 @connection("graphql")
-async def run_get_author(*, author_id: str = "", url: str = "", limit: int = 10, **params) -> dict[str, Any]:
+async def get_author(*, author_id: str = "", url: str = "", limit: int = 10, **params) -> dict[str, Any]:
     """Get a public Goodreads author profile and import bounded authored books
 
         An author is just a person who authored a book — the returned record
@@ -1086,84 +1039,18 @@ async def run_get_author(*, author_id: str = "", url: str = "", limit: int = 10,
         m = re.search(r"/author/show/(\d+)", url)
         if m:
             author_id = m.group(1)
-    return _get_public_author(author_id=str(author_id), limit=int(limit))
+    return await _get_public_author(author_id=str(author_id), limit=int(limit))
 
 
 @returns("book[]")
 @connection("graphql")
-async def run_list_author_books(*, author_id: str = "", limit: int = 10, **params) -> list[dict[str, Any]]:
+async def list_author_books(*, author_id: str = "", limit: int = 10, **params) -> list[dict[str, Any]]:
     """List a public Goodreads author's books
 
         Args:
             author_id: Author ID
             limit: Max books to return
         """
-    return _parse_author_books(author_id=str(author_id), limit=int(limit))
+    return await _parse_author_books(author_id=str(author_id), limit=int(limit))
 
 
-def _emit_json(value: Any) -> None:
-    if isinstance(value, dict) and "__result__" in value:
-        value = value["__result__"]
-    print(json.dumps(value, ensure_ascii=False))
-
-
-def _main() -> None:
-    if len(sys.argv) < 2:
-        raise SystemExit(
-            "Usage: public_graph.py <command> [args...]\n"
-            "Commands: discover_runtime, get_public_book, list_book_reviews,\n"
-            "  list_similar_books, list_series_books, search_books,\n"
-            "  get_public_profile, get_public_author, list_author_books"
-        )
-
-    mode = sys.argv[1]
-    if mode == "discoverRuntime":
-        page_url = sys.argv[2] if len(sys.argv) > 2 else None
-        runtime, _was_cached = _discover_runtime(page_url=page_url)
-        _emit_json(runtime)
-        return
-
-    if mode == "searchBooks":
-        if len(sys.argv) not in {3, 4}:
-            raise SystemExit("Usage: public_graph.py search_books <query> [limit]")
-        query = sys.argv[2]
-        limit = int(sys.argv[3]) if len(sys.argv) == 4 else 10
-        _emit_json(_search_books(query, limit))
-        return
-
-    if mode in {"get_public_book", "list_book_reviews", "list_similar_books", "list_series_books"}:
-        if len(sys.argv) not in {3, 4}:
-            raise SystemExit(f"Usage: public_graph.py {mode} <book_id> [limit]")
-        book_id = sys.argv[2]
-        limit = int(sys.argv[3]) if len(sys.argv) == 4 else 10
-        if mode == "getPublicBook":
-            _emit_json(_get_public_book(book_id))
-            return
-        if mode == "listBookReviews":
-            _emit_json(_list_book_reviews(book_id, limit))
-            return
-        if mode == "listSeriesBooks":
-            _emit_json(_list_series_books(book_id, limit))
-            return
-        _emit_json(_list_similar_books(book_id, limit))
-        return
-
-    if mode in {"get_public_profile", "get_public_author", "list_author_books"}:
-        if len(sys.argv) not in {3, 4}:
-            raise SystemExit(f"Usage: public_graph.py {mode} <id> [limit]")
-        entity_id = sys.argv[2]
-        limit = int(sys.argv[3]) if len(sys.argv) == 4 else 10
-        if mode == "getPublicProfile":
-            _emit_json(_get_public_profile(entity_id, limit))
-            return
-        if mode == "getPublicAuthor":
-            _emit_json(_get_public_author(entity_id, limit))
-            return
-        _emit_json(_parse_author_books(entity_id, limit))
-        return
-
-    raise SystemExit(f"Unknown mode: {mode}")
-
-
-if __name__ == "__main__":
-    _main()

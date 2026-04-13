@@ -167,7 +167,7 @@ async def check_session(**params) -> dict[str, Any]:
 @returns("person")
 @connection("web")
 @timeout(15)
-async def run_get_person(*, user_id: str = "", **params) -> dict[str, Any]:
+async def get_person(*, user_id: str = "", **params) -> dict[str, Any]:
     """Get a rich person profile from Goodreads — demographics, stats, favorite books, genres, currently reading
 
         Args:
@@ -179,7 +179,7 @@ async def run_get_person(*, user_id: str = "", **params) -> dict[str, Any]:
 @returns("person[]")
 @connection("web")
 @timeout(15)
-async def run_search_people(*, query: str = "", limit: int = 10, **params) -> list[dict[str, Any]]:
+async def search_people(*, query: str = "", limit: int = 10, **params) -> list[dict[str, Any]]:
     """Search for Goodreads users by name
 
         Args:
@@ -202,7 +202,7 @@ def _resolve_user_id(user_id: str, params: dict) -> str:
 @returns("person[]")
 @connection("web")
 @timeout(60)
-async def run_list_friends(*, user_id: str = "", page: int = 0, **params) -> list[dict[str, Any]]:
+async def list_friends(*, user_id: str = "", page: int = 0, **params) -> list[dict[str, Any]]:
     """List a user's friends as people with linked Goodreads accounts
 
         Args:
@@ -215,7 +215,7 @@ async def run_list_friends(*, user_id: str = "", page: int = 0, **params) -> lis
 @returns("book[]")
 @connection("web")
 @timeout(60)
-async def run_list_books(*, user_id: str = "", shelf: str = "all", sort: str = "date_added", page: int = 0, **params) -> list[dict[str, Any]]:
+async def list_books(*, user_id: str = "", shelf: str = "all", sort: str = "date_added", page: int = 0, **params) -> list[dict[str, Any]]:
     """List a user's books organized by shelf (requires Goodreads session cookies)
 
         Args:
@@ -230,7 +230,7 @@ async def run_list_books(*, user_id: str = "", shelf: str = "all", sort: str = "
 @returns("review[]")
 @connection("web")
 @timeout(60)
-async def run_list_reviews(*, user_id: str = "", sort: str = "date", page: int = 0, **params) -> list[dict[str, Any]]:
+async def list_reviews(*, user_id: str = "", sort: str = "date", page: int = 0, **params) -> list[dict[str, Any]]:
     """List your book reviews with ratings and dates (requires Goodreads session cookies)
 
         Args:
@@ -244,7 +244,7 @@ async def run_list_reviews(*, user_id: str = "", sort: str = "date", page: int =
 @returns("shelf[]")
 @connection("web")
 @timeout(15)
-async def run_list_shelves(*, user_id: str = "", **params) -> list[dict[str, Any]]:
+async def list_shelves(*, user_id: str = "", **params) -> list[dict[str, Any]]:
     """List a user's bookshelves including default shelves (read, currently-reading, want-to-read)
 
         Args:
@@ -256,7 +256,7 @@ async def run_list_shelves(*, user_id: str = "", **params) -> list[dict[str, Any
 @returns("book[]")
 @connection("web")
 @timeout(60)
-async def run_list_shelf_books(*, user_id: str = "", shelf_name: str = "", page: int = 0, **params) -> list[dict[str, Any]]:
+async def list_shelf_books(*, user_id: str = "", shelf_name: str = "", page: int = 0, **params) -> list[dict[str, Any]]:
     """List books on a specific user shelf (requires Goodreads session cookies)
 
         Args:
@@ -271,7 +271,7 @@ async def run_list_shelf_books(*, user_id: str = "", shelf_name: str = "", page:
 @provides(email_lookup)
 @connection("web")
 @timeout(15)
-async def run_resolve_email(*, email: str = "", **params) -> list[dict[str, Any]]:
+async def resolve_email(*, email: str = "", **params) -> list[dict[str, Any]]:
     """Look up a person on Goodreads by email address
 
         Args:
@@ -282,7 +282,7 @@ async def run_resolve_email(*, email: str = "", **params) -> list[dict[str, Any]
 
 @returns("group[]")
 @connection("web")
-async def run_list_groups(**params) -> list[dict[str, Any]]:
+async def list_groups(**params) -> list[dict[str, Any]]:
     """List the authenticated user's Goodreads groups"""
     return await _list_groups(params=params)
 
@@ -290,7 +290,7 @@ async def run_list_groups(**params) -> list[dict[str, Any]]:
 @returns("person[]")
 @connection("web")
 @timeout(15)
-async def run_list_following(*, user_id: str = "", **params) -> list[dict[str, Any]]:
+async def list_following(*, user_id: str = "", **params) -> list[dict[str, Any]]:
     """List people (users and authors) a user is following
 
         Args:
@@ -302,7 +302,7 @@ async def run_list_following(*, user_id: str = "", **params) -> list[dict[str, A
 @returns("person[]")
 @connection("web")
 @timeout(15)
-async def run_list_followers(*, user_id: str = "", **params) -> list[dict[str, Any]]:
+async def list_followers(*, user_id: str = "", **params) -> list[dict[str, Any]]:
     """List people following a user
 
         Args:
@@ -314,7 +314,7 @@ async def run_list_followers(*, user_id: str = "", **params) -> list[dict[str, A
 @returns("quote[]")
 @connection("web")
 @timeout(15)
-async def run_list_quotes(*, user_id: str = "", **params) -> list[dict[str, Any]]:
+async def list_quotes(*, user_id: str = "", **params) -> list[dict[str, Any]]:
     """List a user's liked/saved quotes with author attribution
 
         Args:
