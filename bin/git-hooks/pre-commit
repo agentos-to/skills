@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# Pre-commit shim — delegates to the canonical hook at the workspace root.
+# Installed via `git config core.hooksPath bin/git-hooks`.
+#
+# The canonical hook runs `agent-sdk validate --all` + the LLM commit review.
+#
+# To re-arm on a fresh clone: `git config core.hooksPath bin/git-hooks`.
+
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+WORKSPACE=$(cd "$REPO_ROOT/.." && pwd)
+CANONICAL_HOOK="$WORKSPACE/bin/git-hooks/pre-commit"
+
+if [ -x "$CANONICAL_HOOK" ]; then
+    "$CANONICAL_HOOK"
+else
+    echo "⚠️  canonical hook not found at $CANONICAL_HOOK — skipping skill validation + review"
+fi
