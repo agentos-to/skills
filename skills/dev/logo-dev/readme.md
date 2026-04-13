@@ -1,5 +1,7 @@
 ---
 id: logo-dev
+capabilities:
+  - http
 name: Logo.dev
 description: "Company logos via CDN - lookup by domain, ticker, or name"
 color: "#635BFF"

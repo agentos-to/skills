@@ -1,5 +1,7 @@
 ---
 id: hackernews
+capabilities:
+  - http
 name: Hacker News
 description: "Read Hacker News stories, comments, and discussions"
 color: "#FF6600"

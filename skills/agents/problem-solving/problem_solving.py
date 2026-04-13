@@ -450,13 +450,13 @@ async def evaluate_problem(path: str, **params) -> dict:
     Args:
         path: Absolute path to pain.md
     """
-    progress.set_job_id(params.get("__job_id__", ""))
+    job_id = params.get("__job_id__", "")
 
     pain_path = Path(path)
     if not pain_path.exists():
         return {"__result__": {"error": f"Pain file not found: {path}"}}
 
-    await progress.progress(1, 3, "Evaluating problem definition...")
+    await progress.report(job_id, current=1, total=3, message="Evaluating problem definition...")
 
     pain_text = pain_path.read_text()
     today = str(date.today())
@@ -477,7 +477,7 @@ async def evaluate_problem(path: str, **params) -> dict:
     )
     _stamp_feedback("evaluate_problem", fb_since)
 
-    await progress.progress(2, 3, "Stamping frontmatter...")
+    await progress.report(job_id, current=2, total=3, message="Stamping frontmatter...")
 
     staged = REPO_ROOT / "_feedback" / "_staged_evaluation.json"
     if staged.exists():
@@ -505,7 +505,7 @@ async def evaluate_problem(path: str, **params) -> dict:
     fm["reviews"] = reviews
     pain_path.write_text(_dump_frontmatter(fm, body))
 
-    await progress.progress(3, 3, "Done")
+    await progress.report(job_id, current=3, total=3, message="Done")
 
     return {"__result__": {
         "pass": passed,
@@ -626,7 +626,7 @@ async def solution(project: str, max_rounds: int = 5, **params) -> dict:
         project: Absolute path to the project directory (contains pain.md)
         max_rounds: Max propose↔review iterations (default 5)
     """
-    progress.set_job_id(params.get("__job_id__", ""))
+    job_id = params.get("__job_id__", "")
 
     project_dir = Path(project)
     pain_path = project_dir / "pain.md"
@@ -649,10 +649,10 @@ async def solution(project: str, max_rounds: int = 5, **params) -> dict:
     for round_num in range(start_round, start_round + max_rounds):
         step = (round_num - start_round) * 2
 
-        await progress.progress(step + 1, total_steps, f"Proposing (round {round_num})...")
+        await progress.report(job_id, current=step + 1, total=total_steps, message=f"Proposing (round {round_num})...")
         proposal_path = await _propose(pain_path, round_num, project_dir, **params)
 
-        await progress.progress(step + 2, total_steps, f"Reviewing (round {round_num})...")
+        await progress.report(job_id, current=step + 2, total=total_steps, message=f"Reviewing (round {round_num})...")
         review_result = await _review(pain_path, Path(proposal_path), project_dir, **params)
 
         if review_result["verdict"] == "implement":
@@ -665,7 +665,7 @@ async def solution(project: str, max_rounds: int = 5, **params) -> dict:
                 drafts_dir.mkdir(exist_ok=True)
                 review_file.rename(drafts_dir / f"v{round_num}-review.md")
 
-    await progress.progress(total_steps, total_steps, f"Done — verdict: {review_result['verdict']}")
+    await progress.report(job_id, current=total_steps, total=total_steps, message=f"Done — verdict: {review_result['verdict']}")
 
     return {"__result__": {
         "verdict": review_result["verdict"],
@@ -686,7 +686,7 @@ async def closeout(project: str, **params) -> dict:
     Args:
         project: Absolute path to the project directory.
     """
-    progress.set_job_id(params.get("__job_id__", ""))
+    job_id = params.get("__job_id__", "")
 
     project_dir = Path(project)
     pain_content = (project_dir / "pain.md").read_text()
@@ -698,16 +698,16 @@ async def closeout(project: str, **params) -> dict:
 
     file_paths = _parse_files_changed(proposal_content)
 
-    await progress.progress(1, 4, "Discovering commits...")
+    await progress.report(job_id, current=1, total=4, message="Discovering commits...")
 
     git_args = ["log", "--oneline", f"--since={since_date}"]
     if file_paths:
         git_args.append("--")
         git_args.extend(file_paths)
-    git_result = await shell.run("git", git_args, timeout=15)
+    git_result = await shell.run("git", args=git_args, timeout=15)
     git_log = git_result.get("stdout", "")
 
-    await progress.progress(2, 4, "Writing closeout...")
+    await progress.report(job_id, current=2, total=4, message="Writing closeout...")
 
     today = str(date.today())
     body = BODY_CLOSEOUT.format(date=today)
@@ -728,12 +728,12 @@ async def closeout(project: str, **params) -> dict:
     )
     _stamp_feedback("closeout", fb_since)
 
-    await progress.progress(3, 4, "Saving closeout...")
+    await progress.report(job_id, current=3, total=4, message="Saving closeout...")
 
     document = _strip_fenced_blocks(result.get("content", ""))
     closeout_path = project_dir / "closeout.md"
     closeout_path.write_text(document)
 
-    await progress.progress(4, 4, "Done")
+    await progress.report(job_id, current=4, total=4, message="Done")
 
     return {"__result__": {"closeout_path": str(closeout_path), "commits": git_log}}

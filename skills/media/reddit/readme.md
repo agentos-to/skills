@@ -1,5 +1,7 @@
 ---
 id: reddit
+capabilities:
+  - http
 name: Reddit
 description: "Read public Reddit communities, posts, and comments"
 color: "#FF4500"

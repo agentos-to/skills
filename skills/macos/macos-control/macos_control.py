@@ -127,7 +127,7 @@ def _read_params() -> dict:
 
 
 async def _run_json_command(args, input_text=None):
-    result = await shell.run(args[0], args[1:], input=input_text)
+    result = await shell.run(args[0], args=args[1:], input=input_text)
     if result["exit_code"] != 0:
         raise RuntimeError(result["stderr"].strip() or f"Command failed: {args[0]}")
     stdout = result["stdout"].strip()
@@ -135,7 +135,7 @@ async def _run_json_command(args, input_text=None):
 
 
 async def _run_text_command(args):
-    result = await shell.run(args[0], args[1:])
+    result = await shell.run(args[0], args=args[1:])
     if result["exit_code"] != 0:
         raise RuntimeError(result["stderr"].strip() or f"Command failed: {args[0]}")
     return result["stdout"]
@@ -419,7 +419,7 @@ async def screenshot_display(*, display_id=None, display_index=None, path=None, 
         raise ValueError("Display not found")
 
     resolved_path = _resolve_output_path(path, f"display-{target['display_id']}")
-    result = await shell.run("screencapture", ["-x", "-D", str(target["display_index"]), resolved_path])
+    result = await shell.run("screencapture", args=["-x", "-D", str(target["display_index"]), resolved_path])
     if result["exit_code"] != 0:
         raise RuntimeError(f"screencapture failed: {result['stderr'].strip()}")
     return {
@@ -454,7 +454,7 @@ async def screenshot_window(*, window_id, path=None, **params):
         raise ValueError("Window is not capture_eligible")
 
     resolved_path = _resolve_output_path(path, f"window-{target_window_id}")
-    result = await shell.run("screencapture", ["-x", "-l", str(target_window_id), resolved_path])
+    result = await shell.run("screencapture", args=["-x", "-l", str(target_window_id), resolved_path])
     if result["exit_code"] != 0:
         raise RuntimeError(f"screencapture failed: {result['stderr'].strip()}")
     frame = target.get("frame", {})
@@ -618,7 +618,7 @@ def _resolve_output_path(value, label):
 @timeout(5)
 async def clipboard_read(**_kwargs):
     """Read the current macOS clipboard contents."""
-    result = await shell.run("pbpaste", [])
+    result = await shell.run("pbpaste", args=[])
     return {"content": result["stdout"]}
 
 
@@ -626,7 +626,7 @@ async def clipboard_read(**_kwargs):
 @timeout(5)
 async def clipboard_write(*, text, **_kwargs):
     """Write text to the macOS clipboard."""
-    result = await shell.run("pbcopy", [], input=text)
+    result = await shell.run("pbcopy", args=[], input=text)
     if result["exit_code"] != 0:
         raise RuntimeError(f"pbcopy failed: {result['stderr'].strip()}")
     return {"status": "ok", "length": len(text)}
@@ -785,7 +785,7 @@ async def read_file(*, path, **_kwargs):
 async def _get_volumes():
     """Get mounted volumes via diskutil."""
     try:
-        result = await shell.run("diskutil", ["list", "-plist"])
+        result = await shell.run("diskutil", args=["list", "-plist"])
         if result["exit_code"] != 0:
             return _get_volumes_fallback()
 

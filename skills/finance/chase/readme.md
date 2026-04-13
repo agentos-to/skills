@@ -1,5 +1,7 @@
 ---
 id: chase
+capabilities:
+  - http
 name: Chase Bank
 description: "Chase Bank accounts, balances, and transactions — checking, savings, and credit cards"
 color: "#117ACA"

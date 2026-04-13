@@ -39,7 +39,7 @@ def _find_all_apps() -> list[Path]:
 async def _read_plist_json(plist_path: Path) -> dict | None:
     """Parse an Info.plist file to a dict via plutil."""
     try:
-        result = await shell.run("plutil", ["-convert", "json", str(plist_path), "-o", "-"], timeout=5)
+        result = await shell.run("plutil", args=["-convert", "json", str(plist_path), "-o", "-"], timeout=5)
         if result["exit_code"] != 0:
             return None
         return json.loads(result["stdout"])
@@ -51,7 +51,7 @@ async def _read_plist_json(plist_path: Path) -> dict | None:
 
 async def _security(*args) -> str:
     """Run a `security` CLI command, return stdout."""
-    result = await shell.run("security", list(args))
+    result = await shell.run("security", args=list(args))
     return result["stdout"].strip()
 
 

@@ -1,5 +1,9 @@
 ---
 id: cursor
+capabilities:
+  - http
+  - shell
+  - sql
 name: Cursor
 description: AI-first code editor with built-in MCP support
 color: "#3B82F6"

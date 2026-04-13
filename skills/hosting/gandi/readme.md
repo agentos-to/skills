@@ -1,5 +1,7 @@
 ---
 id: gandi
+capabilities:
+  - http
 name: Gandi
 description: Domain and DNS management via the Gandi API
 color: "#E74B3C"

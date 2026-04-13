@@ -1,5 +1,8 @@
 ---
 id: facebook
+capabilities:
+  - http
+  - shell
 name: Facebook
 description: Query public Facebook group information without login
 color: "#106BFF"

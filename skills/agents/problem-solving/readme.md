@@ -1,5 +1,8 @@
 ---
 id: problem-solving
+capabilities:
+  - llm
+  - shell
 name: Problem Solving
 description: "Interview the user to a clear problem definition, then run adversarial solutioning"
 color: "#8B5CF6"

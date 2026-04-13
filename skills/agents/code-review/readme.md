@@ -1,5 +1,8 @@
 ---
 id: code-review
+capabilities:
+  - llm
+  - shell
 name: Code Review
 description: "Evaluate code changes against project principles, refactoring specs, and architectural direction"
 color: "#DC2626"

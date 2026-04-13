@@ -1,5 +1,7 @@
 ---
 id: brave
+capabilities:
+  - http
 name: Brave Search
 description: Privacy-focused web search with independent index
 color: "#F83B1D"

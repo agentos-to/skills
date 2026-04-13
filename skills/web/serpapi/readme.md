@@ -1,5 +1,7 @@
 ---
 id: serpapi
+capabilities:
+  - http
 name: SerpAPI
 description: "Google search results API — flights, hotels, web search, and more"
 color: "#0FA47F"

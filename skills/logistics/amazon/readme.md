@@ -1,5 +1,7 @@
 ---
 id: amazon
+capabilities:
+  - http
 name: Amazon
 description: "Search products, get details, and access your Amazon account"
 color: "#FF9900"

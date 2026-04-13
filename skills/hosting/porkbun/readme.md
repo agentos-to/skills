@@ -1,5 +1,7 @@
 ---
 id: porkbun
+capabilities:
+  - http
 name: Porkbun
 description: Domain and DNS management via the Porkbun API
 color: "#D62F53"

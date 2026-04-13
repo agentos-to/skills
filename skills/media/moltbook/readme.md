@@ -1,5 +1,7 @@
 ---
 id: moltbook
+capabilities:
+  - http
 name: Moltbook
 description: "Read and publish Moltbook posts, comments, feeds, communities, and agent profiles. Use when working with Moltbook, submolts, or agent social posting."
 color: "#FF6B6B"

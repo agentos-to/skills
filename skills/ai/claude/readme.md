@@ -1,5 +1,9 @@
 ---
 id: claude
+capabilities:
+  - http
+  - secrets
+  - shell
 name: Claude
 description: Claude — Anthropic's AI model family. Inference via API or local CLI, plus claude.ai chat history.
 color: "#D97757"

@@ -1,5 +1,7 @@
 ---
 id: git
+capabilities:
+  - shell
 name: Git
 description: "Local git repository data — commits, branches, tags, and repo info"
 color: "#F05032"

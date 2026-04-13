@@ -1,5 +1,7 @@
 ---
 id: copilot-money
+capabilities:
+  - sql
 name: Copilot Money
 description: "Read accounts, transactions, and balance history from Copilot Money, a personal finance app for macOS/iOS"
 color: "#6366F1"

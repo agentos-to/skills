@@ -7,7 +7,7 @@ from agentos import shell, returns
 
 async def _git(*args, cwd=None):
     """Run a git command and return stdout. Raises on timeout or nonzero exit."""
-    result = await shell.run("git", list(args), cwd=cwd, timeout=30)
+    result = await shell.run("git", args=list(args), cwd=cwd, timeout=30)
     if result["exit_code"] != 0:
         raise RuntimeError(result["stderr"].strip() or f"git exited {result['exit_code']}")
     return result["stdout"]

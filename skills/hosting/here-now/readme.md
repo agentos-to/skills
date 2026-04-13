@@ -1,5 +1,7 @@
 ---
 id: here-now
+capabilities:
+  - http
 name: here.now
 description: "Publish static websites instantly — HTML, images, PDFs — no account needed"
 color: "#000000"

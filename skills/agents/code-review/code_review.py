@@ -63,7 +63,7 @@ def _load_refactoring_specs() -> str:
 
 async def _load_arch() -> str:
     try:
-        result = await shell.run(str(AGENTOS_ROOT / "dev.sh"), ["arch"], cwd=str(AGENTOS_ROOT))
+        result = await shell.run(str(AGENTOS_ROOT / "dev.sh"), args=["arch"], cwd=str(AGENTOS_ROOT))
         return result.get("stdout", "")
     except Exception:
         return ""

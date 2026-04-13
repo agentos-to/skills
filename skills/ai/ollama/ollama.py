@@ -86,7 +86,7 @@ async def _start_server(binary: str) -> bool:
     try:
         # shell.run is synchronous, so we use it to invoke `ollama serve` via
         # a background shell command. The serve process detaches itself.
-        await shell.run(binary, ["serve"], timeout=2)
+        await shell.run(binary, args=["serve"], timeout=2)
     except Exception:
         pass  # timeout is expected — ollama serve runs forever
     for _ in range(16):
@@ -272,7 +272,7 @@ async def _chat_via_cli(
         parts.append(f"{role}: {content}")
 
     prompt = "\n\n".join(parts)
-    result = await shell.run(binary, ["run", model, "--nowordwrap"], input=prompt, timeout=300)
+    result = await shell.run(binary, args=["run", model, "--nowordwrap"], input=prompt, timeout=300)
     if result["exit_code"] != 0:
         raise RuntimeError(f"ollama run failed: {result['stderr'].strip()}")
 
@@ -348,7 +348,7 @@ async def _op_list_models(connection: dict | None = None, **params) -> list:
 
 async def _list_models_via_cli(connection: dict | None) -> list:
     binary = _binary(connection)
-    result = await shell.run(binary, ["list", "--json"], timeout=15)
+    result = await shell.run(binary, args=["list", "--json"], timeout=15)
     if result["exit_code"] == 0 and result["stdout"].strip():
         try:
             data = json.loads(result["stdout"])
@@ -357,7 +357,7 @@ async def _list_models_via_cli(connection: dict | None) -> list:
             pass
 
     # Fallback: parse text table output
-    result2 = await shell.run(binary, ["list"], timeout=15)
+    result2 = await shell.run(binary, args=["list"], timeout=15)
     return _parse_list_text(result2["stdout"])
 
 
@@ -396,7 +396,7 @@ async def op_pull_model(model: str, connection: dict | None = None, **kwargs) ->
 
 async def _pull_via_cli(model: str, connection: dict | None) -> dict:
     binary = _binary(connection)
-    result = await shell.run(binary, ["pull", model], timeout=600)
+    result = await shell.run(binary, args=["pull", model], timeout=600)
     if result["exit_code"] != 0:
         raise RuntimeError(f"ollama pull failed: {result['stderr'].strip()}")
     return {
@@ -445,7 +445,7 @@ async def op_delete_model(model: str, connection: dict | None = None, **kwargs) 
 
 async def _delete_via_cli(model: str, connection: dict | None) -> dict:
     binary = _binary(connection)
-    result = await shell.run(binary, ["rm", model], timeout=30)
+    result = await shell.run(binary, args=["rm", model], timeout=30)
     if result["exit_code"] != 0:
         raise RuntimeError(f"ollama rm failed: {result['stderr'].strip()}")
     return {"status": "success", "model": model, "message": f"Deleted {model}"}

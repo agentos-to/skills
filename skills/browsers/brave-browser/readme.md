@@ -1,5 +1,9 @@
 ---
 id: brave-browser
+capabilities:
+  - crypto
+  - secrets
+  - sql
 name: Brave Browser
 description: "Browsing history, bookmarks, and cookies from Brave Browser on macOS — including session key extraction for claude.ai"
 color: "#F83B1D"

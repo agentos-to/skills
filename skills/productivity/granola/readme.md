@@ -1,5 +1,7 @@
 ---
 id: granola
+capabilities:
+  - http
 name: Granola
 description: "Meeting transcripts, AI summaries, and Q&A conversations from Granola"
 color: "#2D6A4F"

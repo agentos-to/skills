@@ -59,7 +59,7 @@ async def get_community(
         chromium = _find_chromium()
         if chromium:
             try:
-                result = await shell.run(chromium, ["--headless", "--dump-dom", group_url], timeout=20)
+                result = await shell.run(chromium, args=["--headless", "--dump-dom", group_url], timeout=20)
                 dom = result["stdout"]
                 if dom:
                     mc = re.search(r"([\d,.]+K?)\s*members?", dom)

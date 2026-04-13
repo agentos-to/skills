@@ -1,5 +1,7 @@
 ---
 id: youtube
+capabilities:
+  - http
 name: YouTube
 description: Get video metadata and transcripts using yt-dlp
 color: "#FF0808"

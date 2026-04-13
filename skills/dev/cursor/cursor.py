@@ -466,7 +466,7 @@ async def _find_agentos_binary():
         try:
             with open(pid_file) as f:
                 pid = int(f.read().strip())
-            result = await shell.run("lsof", ["-p", str(pid), "-a", "-d", "txt", "-F", "n"], timeout=5)
+            result = await shell.run("lsof", args=["-p", str(pid), "-a", "-d", "txt", "-F", "n"], timeout=5)
             for line in result["stdout"].splitlines():
                 if line.startswith("n") and "agentos" in line.lower():
                     path = line[1:]
@@ -488,7 +488,7 @@ async def _find_agentos_binary():
             pass
 
     # 3. PATH
-    result = await shell.run("which", ["agentos"])
+    result = await shell.run("which", args=["agentos"])
     if result["exit_code"] == 0:
         path = result["stdout"].strip()
         if os.path.isfile(path):

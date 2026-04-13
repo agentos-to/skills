@@ -1,5 +1,7 @@
 ---
 id: google-calendar
+capabilities:
+  - http
 name: Google Calendar
 description: "Read, create, update, and delete Google Calendar events — replaces apple-calendar with Google API + OAuth"
 color: "#4285F4"

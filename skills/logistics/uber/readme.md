@@ -1,5 +1,7 @@
 ---
 id: uber
+capabilities:
+  - http
 name: Uber
 description: "Ride history, trip details, Eats order history, and account info from Uber"
 color: "#000000"

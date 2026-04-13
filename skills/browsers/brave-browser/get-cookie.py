@@ -8,10 +8,10 @@ subprocess, sqlite3, or cryptography. This is important because the Python
 sandbox blocks those imports. Every skill, including infrastructure skills
 like cookie providers, must use SDK modules for I/O:
 
-  keychain.read()   → engine __keychain_read__ → macOS Keychain
-  crypto.pbkdf2()   → engine __crypto_pbkdf2__ → PBKDF2-HMAC-SHA1
-  crypto.aes_decrypt() → engine __crypto_aes__ → AES-128-CBC
-  sql.query()       → engine __sql_query__     → SQLite read
+  keychain.read()   → secrets.read  → macOS Keychain
+  crypto.pbkdf2()   → crypto.pbkdf2 → PBKDF2-HMAC-SHA1
+  crypto.aes()      → crypto.aes    → AES-128-CBC
+  sql.query()       → sql.query     → SQLite read
 
 Chromium cookie encryption (v10):
   1. Master password stored in macOS Keychain ("Brave Safe Storage" / "Brave")
@@ -75,8 +75,7 @@ async def _decrypt_cookie_value(encrypted_hex: str, key_hex: str) -> str | None:
     iv_hex = "20" * 16
 
     try:
-        plaintext_hex = await crypto.aes_decrypt(key=key_hex, data=ciphertext.hex(), iv=iv_hex)
-        plaintext = bytes.fromhex(plaintext_hex)
+        plaintext = await crypto.aes(data=ciphertext.hex(), key=key_hex, iv=iv_hex)
         # Skip first 32 bytes — garbled CBC IV mismatch artifact
         return plaintext[32:].decode("utf-8")
     except Exception:

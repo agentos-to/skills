@@ -1,5 +1,8 @@
 ---
 id: imessage
+capabilities:
+  - shell
+  - sql
 name: iMessage
 description: Send and read iMessages and SMS from macOS Messages app
 color: "#34C759"

@@ -1,5 +1,7 @@
 ---
 id: greptile
+capabilities:
+  - http
 name: Greptile
 description: AI code review and codebase search — organization and member management via dashboard session
 color: "#16B364"

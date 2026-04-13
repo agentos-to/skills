@@ -1,5 +1,7 @@
 ---
 id: todoist
+capabilities:
+  - http
 name: Todoist
 description: Personal task management
 color: "#DE483A"

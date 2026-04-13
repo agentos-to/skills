@@ -1,5 +1,10 @@
 ---
 id: mimestream
+capabilities:
+  - http
+  - plist
+  - secrets
+  - sql
 name: Mimestream
 description: "Read and search email from Mimestream, a native macOS email client for Gmail"
 color: "#3B82F6"

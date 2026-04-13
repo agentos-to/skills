@@ -1,5 +1,7 @@
 ---
 id: whatsapp
+capabilities:
+  - sql
 name: WhatsApp
 description: Read WhatsApp messages from local macOS database
 color: "#2CD46B"

@@ -1,5 +1,7 @@
 ---
 id: austin-boulder-project
+capabilities:
+  - http
 name: Austin Boulder Project
 description: Class schedules and bookings for the Austin Bouldering Project gym
 color: "#1e3a2f"

@@ -1,5 +1,7 @@
 ---
 id: github
+capabilities:
+  - shell
 name: GitHub
 description: "Work with GitHub issues, pull requests, and repository files through the local gh CLI. Use when working with GitHub repos, issues, PRs, or reading files from a repo."
 color: "#24292F"

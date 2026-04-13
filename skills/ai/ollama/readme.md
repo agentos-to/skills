@@ -1,5 +1,8 @@
 ---
 id: ollama
+capabilities:
+  - http
+  - shell
 name: Ollama
 description: Local AI models running on your machine via Ollama
 color: "#0F172A"

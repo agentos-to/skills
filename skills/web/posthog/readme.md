@@ -1,5 +1,7 @@
 ---
 id: posthog
+capabilities:
+  - http
 name: PostHog
 description: "Product analytics — events, persons, and session recordings"
 color: "#1D4AFF"

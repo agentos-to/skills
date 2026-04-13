@@ -1,5 +1,7 @@
 ---
 id: linear
+capabilities:
+  - http
 name: Linear
 description: Project management for engineering teams
 color: "#636FD3"

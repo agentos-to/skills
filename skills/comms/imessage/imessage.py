@@ -238,7 +238,7 @@ async def op_search_messages(*, query, limit=200, **params):
 @returns({"ok": "boolean"})
 async def op_send_message(*, to, text, service="iMessage", **params):
     """Send an iMessage or SMS to a phone number or email."""
-    result = await shell.run("imsg", ["send", "--to", to, "--text", text, "--service", service, "--json"], timeout=15)
+    result = await shell.run("imsg", args=["send", "--to", to, "--text", text, "--service", service, "--json"], timeout=15)
     if result["exit_code"] != 0:
         raise RuntimeError(f"imsg send failed: {result['stderr'].strip()}")
     return json.loads(result["stdout"]) if result["stdout"].strip() else None

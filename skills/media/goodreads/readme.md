@@ -1,5 +1,7 @@
 ---
 id: goodreads
+capabilities:
+  - http
 name: Goodreads
 description: "Read your Goodreads profile, books, reviews, friends, and activity"
 color: "#372213"

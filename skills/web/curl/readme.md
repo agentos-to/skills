@@ -1,5 +1,7 @@
 ---
 id: curl
+capabilities:
+  - http
 name: Curl
 description: Simple URL fetching using curl (no API key needed)
 color: "#333333"

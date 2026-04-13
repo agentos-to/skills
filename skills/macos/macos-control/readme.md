@@ -1,5 +1,7 @@
 ---
 id: macos-control
+capabilities:
+  - shell
 name: macOS Control
 description: "Inspect macOS apps, processes, displays, windows, screenshots, and filesystem with built-in system tools"
 color: "#111827"

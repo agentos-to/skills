@@ -1,5 +1,8 @@
 ---
 id: macos-security
+capabilities:
+  - shell
+  - sql
 name: macOS Security
 description: >
   Audit macOS credentials, Keychain entries, and app tokens. Lists what OAuth tokens,

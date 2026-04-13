@@ -19,7 +19,7 @@ def _read_payload():
 
 
 async def _run_gh(args):
-    result = await shell.run("gh", list(args))
+    result = await shell.run("gh", args=list(args))
     if result["exit_code"] != 0:
         _fail(result["stderr"].strip() or result["stdout"].strip() or "gh command failed", result["exit_code"])
     return result["stdout"]

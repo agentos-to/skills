@@ -1,5 +1,7 @@
 ---
 id: spacex
+capabilities:
+  - http
 name: SpaceX
 description: SpaceX launch data — upcoming, past, and individual launch details
 color: "#005288"

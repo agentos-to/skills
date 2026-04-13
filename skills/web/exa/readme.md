@@ -1,5 +1,7 @@
 ---
 id: exa
+capabilities:
+  - http
 name: Exa
 description: Semantic web search and content extraction
 color: "#1F40ED"
