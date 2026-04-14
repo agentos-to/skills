@@ -1,52 +1,50 @@
 # AgentOS Skills
 
-Community skills and themes for [AgentOS](https://github.com/agentos/core).
+Skills — Python adapters that connect AgentOS to third-party services
+(GitHub, Google, iMessage, Brave, etc.) and expose agent-only tools
+(LLM, web search, file system). Also ships the Python **Skills SDK**
+at [`_sdk/`](_sdk).
 
----
+[agentos.to](https://agentos.to) · [agentos.to/skills](https://agentos.to/skills/)
 
 ## What is AgentOS?
 
-**AgentOS is the semantic layer between AI assistants and your digital life.**
+A local operating system for human-AI collaboration, built for agents
+first. The engine speaks MCP so any MCP-capable agent (Claude Code,
+Cursor, etc.) can use AgentOS as its tool surface. Your data stays on
+your machine.
 
-Your tasks are in Todoist. Your calendar is in Google. Your messages are split across iMessage, WhatsApp, Slack. Each service is a walled garden. AgentOS gives AI assistants a unified way to access all your services through a universal entity model.
+Skills are how capabilities arrive. A skill declares what it
+**provides** — `@provides(llm)`, `@provides(web_search)`,
+`@provides(file_system)` — and the engine matchmakes requests to the
+best available provider. Callers ask for a capability, not a specific
+skill.
 
----
-
-## What's Here
+## What's here
 
 ```
-skills/            Skills — YAML configs + Python helpers
-themes/            UI themes
+agents/         Agent-only tools (code-review, problem-solving, …)
+ai/             LLM providers (anthropic, openai, …)
+comms/          Messaging (imessage, whatsapp, slack, …)
+finance/        Banking, budgeting, payments
+hosting/        DNS, deployment (porkbun, vercel, …)
+logistics/      Ride-share, delivery, travel
+media/          Books, music, video (goodreads, spotify, …)
+productivity/   Calendar, tasks, notes
+web/            Browsers, search, scraping
+_sdk/           Python Skills SDK (pip install -e ./_sdk)
 ```
 
-Browse `skills/` for all available skills.
+Each top-level category is flat so the repo doubles as a browse-able
+catalog — clone and you immediately see every skill.
 
----
-
-## Documentation
-
-All developer documentation lives in the [agentOS docs repo](https://github.com/agentos/docs):
-
-| What | Where |
-|------|-------|
-| **Skill development guide** | `docs/src/content/docs/skills.md` |
-| **Shapes, connections, auth** | `docs/src/content/docs/` |
-| **Reverse engineering** | `docs/src/content/docs/reverse-engineering/` |
-| **Quick reference** | `agentos.to/skills.md` |
-
----
-
-## Contributing
-
-**Anyone can contribute.** Found a bug? Want a new skill? Have an idea? [Open an issue](https://github.com/agentos/skills/issues).
+## Getting started
 
 ```bash
-git clone https://github.com/agentos/skills
+git clone https://github.com/agentos-to/skills
 cd skills
-# Install the SDK once — it ships the validator used by pre-commit
-pip install -e ./_sdk
-# Arm the pre-commit hook (runs validator + code review on every commit)
-git config core.hooksPath ../bin/git-hooks
+pip install -e ./_sdk                         # ships the validator
+git config core.hooksPath ../bin/git-hooks    # pre-commit + code review
 ```
 
 Useful commands:
@@ -59,10 +57,25 @@ agent-sdk new-skill my-skill        # scaffold a new skill
 agent-sdk shapes                    # list available shapes
 ```
 
----
+Full authoring guide at
+[agentos.to/skills](https://agentos.to/skills/).
+
+## Sibling repos
+
+| Repo                                                   | Lang         | What |
+| ------------------------------------------------------ | ------------ | ---- |
+| [`core`](https://github.com/agentos-to/core)           | Rust + TS    | The engine, CLI, MCP server |
+| [`site`](https://github.com/agentos-to/site)           | Astro + YAML | Landing + docs + shapes (ontology) — deploys to [agentos.to](https://agentos.to) |
+| **`skills`** (this repo)                               | Python       | Skills + Python SDK |
+| [`apps`](https://github.com/agentos-to/apps)           | TypeScript   | Apps + React components + TS SDK |
+
+## Contributing
+
+Anyone can contribute. Found a bug? Want a new skill?
+[Open an issue](https://github.com/agentos-to/skills/issues) or a PR.
 
 ## License
 
-**MIT** — see [LICENSE](LICENSE).
-
-By contributing, you grant AgentOS the right to use your contributions in official releases, including commercial offerings. Your code stays open forever.
+MIT — see [LICENSE](LICENSE). By contributing you grant AgentOS the
+right to use your contributions in official releases, including
+commercial offerings. Your code stays open forever.
