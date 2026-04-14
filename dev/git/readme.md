@@ -31,25 +31,25 @@ that's already on your machine.
 
 ```bash
 # List recent commits
-git_commit.list (skill: git, path: "/Users/joe/dev/agentos")
+git_commit.list (skill: git, path: "~/dev/myproject")
 
 # Search commit messages
-git_commit.search (skill: git, path: "/Users/joe/dev/agentos", query: "readme")
+git_commit.search (skill: git, path: "~/dev/myproject", query: "readme")
 
 # Get a specific commit
-git_commit.get (skill: git, path: "/Users/joe/dev/agentos", id: "f9f9f57")
+git_commit.get (skill: git, path: "~/dev/myproject", id: "f9f9f57")
 
 # List branches
-branch.list (skill: git, path: "/Users/joe/dev/agentos")
+branch.list (skill: git, path: "~/dev/myproject")
 
 # Get repo info
-repository.get (skill: git, path: "/Users/joe/dev/agentos")
+repository.get (skill: git, path: "~/dev/myproject")
 
 # Live status (not stored — computed fresh)
-git.status (path: "/Users/joe/dev/agentos")
+git.status (path: "~/dev/myproject")
 
 # View diff
-git.diff (path: "/Users/joe/dev/agentos", staged: true)
+git.diff (path: "~/dev/myproject", staged: true)
 ```
 
 ## Design Decisions

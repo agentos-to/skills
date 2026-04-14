@@ -79,5 +79,5 @@ POST /api/adapters/facebook/group.get
 
 ## References
 
-- Linear task AGE-288: Facebook Connector: Groups API (no login required)
-- Found in Cursor transcript: `/Users/joe/.cursor/projects/Users-joe-dev-adavia-marketing/agent-transcripts/7a69f4bc-4dbb-4666-b706-31d672c48206.txt`
+- Facebook Graph API — Groups: <https://developers.facebook.com/docs/graph-api/reference/group>
+- mbasic.facebook.com — the text-only mobile variant used by scrapers
