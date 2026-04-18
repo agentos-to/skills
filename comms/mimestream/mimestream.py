@@ -348,15 +348,15 @@ async def credential_get(*, account, **params):
     Reads the NSKeyedArchiver binary plist, extracts the refresh token and
     client ID, then exchanges for a fresh access token.
     """
-    # Step 1: Read binary plist hex from keychain
-    hex_data = await keychain.read(
+    # Step 1: Read binary plist from keychain (returns bytes)
+    blob = await keychain.read(
         service=f"Mimestream: {account}",
         account="OAuth",
         binary=True,
     )
 
     # Step 2: Parse plist — extract fields by $objects index
-    fields = await plist.parse(hex_data, extract={
+    fields = await plist.parse(blob.hex(), extract={
         "refreshToken": 32,
         "clientId": 13,
         "tokenUrl": 10,
@@ -368,16 +368,16 @@ async def credential_get(*, account, **params):
     #   mail.google.com, calendar.events, contacts, contacts.other.readonly,
     #   directory.readonly, gmail.settings.basic, userinfo.profile
     token_response = await oauth.exchange(
-        token_url=fields["token_url"],
-        refresh_token=fields["refresh_token"],
-        client_id=fields["client_id"],
+        token_url=fields["tokenUrl"],
+        refresh_token=fields["refreshToken"],
+        client_id=fields["clientId"],
     )
 
     return {
         "accessToken": token_response.get("access_token"),
         "expiresIn": token_response.get("expires_in"),
         "scope": token_response.get("scope"),
-        "refreshToken": fields["refresh_token"],
-        "clientId": fields["client_id"],
-        "tokenUrl": fields["token_url"],
+        "refreshToken": fields["refreshToken"],
+        "clientId": fields["clientId"],
+        "tokenUrl": fields["tokenUrl"],
     }
