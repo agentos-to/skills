@@ -83,9 +83,9 @@ you let through makes the next fix harder.
 ## Cross-repo awareness
 
 The diff may include changes from multiple repos: core (engine, Rust), docs (shapes +
-SDK docs), skills (YAML + Python + `_sdk/`), and apps (TypeScript + `_sdk/`). Sections
-are labeled with their repo name and whether the change is staged (being committed) or
-uncommitted (work-in-progress in a sibling repo).
+SDK docs), skills (YAML + Python), sdk-skills (Python SDK), apps (TypeScript), and
+sdk-apps (TypeScript SDK). Sections are labeled with their repo name and whether the
+change is staged (being committed) or uncommitted (work-in-progress in a sibling repo).
 
 Treat ALL changes holistically — this is one product with one team. Violations in
 uncommitted sibling repo code are just as blocking as violations in the staged commit.
