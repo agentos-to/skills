@@ -37,23 +37,16 @@ async def _get_master_key() -> str:
     return await keychain.read(service="Brave Safe Storage", account="Brave")
 
 
-async def _derive_key(password: str) -> str:
-    """Derive AES-128 key using PBKDF2-HMAC-SHA1 (Chromium cookie encryption).
-
-    Returns hex-encoded 16-byte key.
-    """
+async def _derive_key(password: str) -> bytes:
+    """Derive AES-128 key using PBKDF2-HMAC-SHA1 (Chromium cookie encryption)."""
     return await crypto.pbkdf2(password=password, salt="saltysalt", iterations=1003, length=16)
 
 
-async def _decrypt_cookie_value(encrypted_hex: str, key_hex: str) -> str | None:
+async def _decrypt_cookie_value(encrypted_hex: str, key: bytes) -> str | None:
     """Decrypt a Chromium v10 cookie value.
-
-    encrypted_hex: hex-encoded bytes from the database (encrypted_value blob).
-    key_hex: hex-encoded 16-byte AES key from await _derive_key().
 
     Chromium v10 encryption: AES-128-CBC with IV = 16 space bytes (0x20).
     The first 32 bytes of decrypted output are garbled (CBC IV mismatch artifact).
-    The actual cookie value starts at byte 32.
     """
     raw = bytes.fromhex(encrypted_hex)
     if len(raw) < 4:
@@ -61,22 +54,17 @@ async def _decrypt_cookie_value(encrypted_hex: str, key_hex: str) -> str | None:
 
     prefix = raw[:3]
     if prefix != b"v10":
-        # Not encrypted — might be plaintext
         try:
             return raw.decode("utf-8")
         except Exception:
             return None
 
     ciphertext = raw[3:]
-    if len(ciphertext) == 0:
+    if not ciphertext:
         return None
 
-    # IV = 16 space bytes (0x20)
-    iv_hex = "20" * 16
-
     try:
-        plaintext = await crypto.aes(data=ciphertext.hex(), key=key_hex, iv=iv_hex)
-        # Skip first 32 bytes — garbled CBC IV mismatch artifact
+        plaintext = await crypto.aes(data=ciphertext.hex(), key=key.hex(), iv="20" * 16)
         return plaintext[32:].decode("utf-8")
     except Exception:
         return None
@@ -92,7 +80,7 @@ async def _get_cookies(domain: str, names: list[str] | None = None,
         raise FileNotFoundError(f"Brave Cookies database not found: {cookies_db}")
 
     password = await _get_master_key()
-    key_hex = await _derive_key(password)
+    key = await _derive_key(password)
 
     # Copy to temp to avoid lock conflicts with running Brave.
     # Also copy journal/WAL files so SQLite can replay uncommitted writes.
@@ -138,7 +126,7 @@ async def _get_cookies(domain: str, names: list[str] | None = None,
             if not encrypted_hex:
                 continue
 
-            value = await _decrypt_cookie_value(encrypted_hex, key_hex)
+            value = await _decrypt_cookie_value(encrypted_hex, key)
             if value is None:
                 continue
 
