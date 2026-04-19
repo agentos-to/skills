@@ -690,7 +690,7 @@ def _entry_from_direntry(entry):
 
     result = {
         "name": entry.name,
-        "tags": "folder" if is_dir else "file",
+        "shape": "folder" if is_dir else "file",
         "kind": "dir" if is_dir else ("symlink" if is_symlink else "file"),
         "path": entry.path,
         "size": st.st_size if not is_dir else None,
@@ -816,7 +816,7 @@ async def _get_volumes():
 
                 volumes.append({
                     "name": vol_name,
-                    "tags": "volume",
+                    "shape": "volume",
                     "path": mount_point,
                     "totalBytes": total_bytes,
                     "freeBytes": free_bytes,
@@ -862,7 +862,7 @@ def _get_volumes_fallback():
         sv = os.statvfs("/")
         volumes.append({
             "name": "Macintosh HD",
-            "tags": "volume",
+            "shape": "volume",
             "path": "/",
             "totalBytes": sv.f_blocks * sv.f_frsize,
             "freeBytes": sv.f_bavail * sv.f_frsize,
@@ -886,7 +886,7 @@ def _get_volumes_fallback():
                 sv = os.statvfs(mount)
                 volumes.append({
                     "name": name,
-                    "tags": "volume",
+                    "shape": "volume",
                     "path": mount,
                     "totalBytes": sv.f_blocks * sv.f_frsize,
                     "freeBytes": sv.f_bavail * sv.f_frsize,
@@ -962,7 +962,7 @@ def _get_finder_favorites():
                 favorites.append({
                     "name": os.path.basename(resolved),
                     "path": resolved,
-                    "tags": "folder",
+                    "shape": "folder",
                 })
 
     return favorites
@@ -1039,7 +1039,7 @@ async def get_file_info(*, path, **_kwargs):
         "name": os.path.basename(resolved),
         "path": resolved,
         "kind": "dir" if is_dir else ("symlink" if is_symlink else "file"),
-        "tags": "folder" if is_dir else "file",
+        "shape": "folder" if is_dir else "file",
         "size": st.st_size,
         "sizeFormatted": _format_size(st.st_size),
         "sizeOnDisk": size_on_disk,

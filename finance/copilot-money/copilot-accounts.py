@@ -89,7 +89,7 @@ async def load_accounts(**params):
                 "limit": data.get("limit") or None,
                 "institutionId": data.get("institutionId"),
                 "color": data.get("color"),
-                "tags": tags,
+                "user_tag": tags,
             })
         except Exception as e:
             print(f"Warning: could not read {path}: {e}", file=sys.stderr)

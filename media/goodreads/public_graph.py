@@ -452,7 +452,7 @@ def _map_review_list(apollo: dict[str, Any], edges: list[dict[str, Any]], book: 
                 "likes": review.get("likeCount"),
             },
             "commentCount": review.get("commentCount"),
-            "tags": tags,
+            "user_tag": tags,
             "shelfName": shelf.get("name"),
         }
         if reviewer_id or reviewer_name:
