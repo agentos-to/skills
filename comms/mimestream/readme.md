@@ -23,6 +23,25 @@ product:
   name: Mimestream
   website: https://mimestream.com
   developer: Mimestream LLC
+
+test:
+  list_accounts: {}
+  list_mailboxes: {}
+  list_emails:
+    params:
+      limit: 5
+  list_conversations:
+    params:
+      limit: 5
+  # Id-scoped ops need a live email/conversation id — skip.
+  get_email:
+    skip: true
+  get_conversation:
+    skip: true
+  search_emails:
+    skip: true
+  credential_get:
+    skip: true
 ---
 
 # Mimestream

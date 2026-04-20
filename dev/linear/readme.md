@@ -19,6 +19,36 @@ connections:
     label: API Key
     help_url: https://linear.app/settings/api
 
+test:
+  whoami: {}
+  list_projects: {}
+  get_organization: {}
+  get_teams: {}
+  get_workflow_states: {}
+  list_tasks:
+    params:
+      limit: 5
+  # Writes / destructive ops — skip by default.
+  create_task:
+    skip: true
+  update_task:
+    skip: true
+  delete_task:
+    skip: true
+  setup:
+    skip: true
+  get_task:
+    skip: true
+  get_cycles:
+    skip: true
+  get_relations:
+    skip: true
+  add_blocker:
+    skip: true
+  remove_relation:
+    skip: true
+  add_related:
+    skip: true
 ---
 
 # Linear

@@ -17,6 +17,21 @@ connections:
         Authorization: '"Bearer " + .auth.key'
     label: Personal Access Token
     help_url: https://admin.gandi.net/organizations/account/pat
+
+test:
+  list_domains: {}
+  # Domain-scoped ops need a live domain arg — skip in the generic sweep.
+  get_domain:
+    skip: true
+  list_dns_records:
+    skip: true
+  get_dns_record:
+    skip: true
+  # Writes — skip.
+  upsert_dns_record:
+    skip: true
+  delete_dns_record:
+    skip: true
 ---
 
 # Gandi

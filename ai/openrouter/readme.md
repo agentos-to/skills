@@ -18,6 +18,11 @@ connections:
         Authorization: '"Bearer " + .auth.key'
     label: API Key
     help_url: https://openrouter.ai/keys
+
+test:
+  list_models: {}
+  chat:
+    skip: true
 ---
 
 # OpenRouter

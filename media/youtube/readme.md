@@ -16,6 +16,26 @@ sources:
   - https://www.youtube.com
   - https://www.youtube-nocookie.com
 
+test:
+  search_videos:
+    params:
+      query: claude anthropic
+      limit: 3
+  # yt-dlp-driven ops are slow + occasionally flaky; keep the sweep fast.
+  search_recent_video:
+    skip: true
+  list_videos:
+    skip: true
+  get_video:
+    skip: true
+  transcript_video:
+    skip: true
+  get_channel:
+    skip: true
+  get_avatar_channel:
+    skip: true
+  list_posts:
+    skip: true
 ---
 
 # YouTube

@@ -35,6 +35,51 @@ product:
   name: Uber
   website: https://uber.com
   developer: Uber Technologies
+
+test:
+  # Cookie-auth ops — skip by default; wire per-session when cookies are present.
+  check_session:
+    skip: true
+  check_eats_session:
+    skip: true
+  whoami:
+    skip: true
+  get_eats_profile:
+    skip: true
+  list_trips:
+    skip: true
+  get_trip:
+    skip: true
+  list_deliveries:
+    skip: true
+  get_delivery:
+    skip: true
+  search_stores:
+    skip: true
+  get_store:
+    skip: true
+  get_item_customizations:
+    skip: true
+  search_products:
+    skip: true
+  search_address:
+    skip: true
+  list_addresses:
+    skip: true
+  get_messages:
+    skip: true
+  list_nearby_stores:
+    skip: true
+  add_to_cart:
+    skip: true
+  get_cart:
+    skip: true
+  clear_cart:
+    skip: true
+  checkout:
+    skip: true
+  track_delivery:
+    skip: true
 ---
 
 # Uber

@@ -21,4 +21,21 @@ product:
   name: Google Calendar
   website: https://calendar.google.com
   developer: Google LLC
+
+test:
+  list_calendars: {}
+  list_events:
+    params:
+      days: 7
+  # Writes — skip.
+  create_event:
+    skip: true
+  update_event:
+    skip: true
+  delete_event:
+    skip: true
+  get_event:
+    skip: true
+  search_events:
+    skip: true
 ---

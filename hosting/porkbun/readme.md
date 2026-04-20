@@ -18,6 +18,17 @@ connections:
         secretapikey: .auth.key | split(":") | .[1]
     label: API key and secret
     help_url: https://porkbun.com/account/api
+
+test:
+  list_domains: {}
+  list_dns_records:
+    skip: true
+  create_dns_record:
+    skip: true
+  update_dns_record:
+    skip: true
+  delete_dns_record:
+    skip: true
 ---
 
 # Porkbun

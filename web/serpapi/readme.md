@@ -18,6 +18,19 @@ connections:
         api_key: .auth.key
     label: API Key
     help_url: https://serpapi.com/manage-api-key
+
+test:
+  # All ops consume API quota — skip by default; wire per-session when actively testing.
+  search_offers:
+    skip: true
+  list_offers:
+    skip: true
+  get_offer:
+    skip: true
+  get_booking_options:
+    skip: true
+  get_price_insights:
+    skip: true
 ---
 
 # SerpAPI

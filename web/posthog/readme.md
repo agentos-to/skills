@@ -22,6 +22,26 @@ product:
   name: PostHog
   website: https://posthog.com
   developer: PostHog Inc
+
+test:
+  get_projects: {}
+  # Project-scoped ops need a live project_id — skip by default.
+  list_persons:
+    skip: true
+  search_persons:
+    skip: true
+  get_person:
+    skip: true
+  list_events:
+    skip: true
+  get_event:
+    skip: true
+  query:
+    skip: true
+  get_event_definitions:
+    skip: true
+  list_recordings:
+    skip: true
 ---
 
 # PostHog

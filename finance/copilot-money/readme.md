@@ -11,6 +11,12 @@ privacy_url: "https://copilot.money/privacy"
 connections:
   db:
     sqlite: ~/Library/Group Containers/group.com.copilot.production/database/CopilotDB.sqlite
+
+test:
+  load_accounts: {}
+  fetch_transactions:
+    params:
+      limit: 5
 ---
 
 # Copilot Money

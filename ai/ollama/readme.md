@@ -17,6 +17,26 @@ connections:
     description: Ollama CLI — can start the server, pull/delete models, management ops
     vars:
       binary: /opt/homebrew/bin/ollama
+
+test:
+  op_status: {}
+  list_models_cli: {}
+  # API path + ps require the server to be running — skip unless local Ollama is up.
+  list_models:
+    skip: true
+  ps:
+    skip: true
+  op_show_model:
+    skip: true
+  # Inference / destructive ops — skip by default.
+  op_chat:
+    skip: true
+  op_generate:
+    skip: true
+  op_pull_model:
+    skip: true
+  op_delete_model:
+    skip: true
 ---
 
 # Ollama

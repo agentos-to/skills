@@ -19,6 +19,28 @@ connections:
     label: API Token
     help_url: https://todoist.com/help/articles/find-your-api-token-Jpzx9IIlB
 
+test:
+  list_tasks: {}
+  list_all_tasks: {}
+  list_projects: {}
+  list_tags: {}
+  # Writes — skip.
+  create_task:
+    skip: true
+  update_task:
+    skip: true
+  complete_task:
+    skip: true
+  reopen_task:
+    skip: true
+  delete_task:
+    skip: true
+  move_task:
+    skip: true
+  filter_task:
+    skip: true
+  get_task:
+    skip: true
 ---
 
 # Todoist
