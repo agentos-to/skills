@@ -132,10 +132,17 @@ def _org_from_session(session: dict) -> dict:
 
 
 def _greptile_account_from_user(user: dict, org: dict) -> dict:
-    """Map the logged-in user + current org into an account shape."""
+    """Map the logged-in user + current org into an account shape.
+
+    Identity is graph-native per docs/shapes/account.yaml:
+    `(at, identifier)` where `at` is a relation to the namespace
+    (here: the Greptile product node). The engine creates / dedups
+    the product node from the inline `{shape: "product", url, name}`
+    sidecar.
+    """
     return {
         "id": f"greptile:{user.get('greptileId')}",
-        "issuer": "greptile.com",
+        "at": {"shape": "product", "url": "https://greptile.com", "name": "Greptile"},
         "identifier": user.get("email") or "",
         "email": user.get("email"),
         "handle": user.get("email"),

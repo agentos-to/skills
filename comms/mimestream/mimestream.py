@@ -340,7 +340,7 @@ async def list_accounts(**params):
 # ==============================================================================
 
 
-@returns({"accessToken": "string", "refreshToken": "string", "clientId": "string", "tokenUrl": "string"})
+@returns({"access_token": "string", "refresh_token": "string", "client_id": "string", "token_url": "string", "expires_in": "integer", "scope": "string"})
 @provides(oauth_auth, service="google", account_param="account")
 async def credential_get(*, account, **params):
     """Get a live Google OAuth access token from Mimestream's keychain.
@@ -373,11 +373,19 @@ async def credential_get(*, account, **params):
         client_id=fields["clientId"],
     )
 
+    # Engine convention: snake_case OAuth fields. The auth resolver
+    # (crates/auth/src/types.rs::Session::to_auth_header,
+    # crates/auth/src/resolve.rs token-refresh path) reads
+    # `access_token`, `refresh_token`, `client_id`, `expires_in` —
+    # snake_case is the contract. Returning camelCase silently breaks
+    # downstream auth: the credential lands in the store but reads
+    # back missing the fields the resolver looks for, and every
+    # gmail/calendar/contacts call gets a 401.
     return {
-        "accessToken": token_response.get("access_token"),
-        "expiresIn": token_response.get("expires_in"),
+        "access_token": token_response.get("access_token"),
+        "expires_in": token_response.get("expires_in"),
         "scope": token_response.get("scope"),
-        "refreshToken": fields["refreshToken"],
-        "clientId": fields["clientId"],
-        "tokenUrl": fields["tokenUrl"],
+        "refresh_token": fields["refreshToken"],
+        "client_id": fields["clientId"],
+        "token_url": fields["tokenUrl"],
     }
