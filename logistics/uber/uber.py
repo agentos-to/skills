@@ -273,10 +273,14 @@ def _parse_fare(fare_str: str) -> tuple[float | None, str | None]:
 # Operations
 # ---------------------------------------------------------------------------
 
-@returns({"authenticated": "boolean", "identifier": "string", "display": "string", "domain": "string"})
+_UBER = {"shape": "product", "url": "https://uber.com", "name": "Uber"}
+_UBER_EATS = {"shape": "product", "url": "https://ubereats.com", "name": "Uber Eats"}
+
+
+@returns("account")
 @connection("web")
 async def check_session(**params) -> dict:
-    """Validate session and return account identity."""
+    """Validate Uber session and return account identity."""
     cookie_header = get_cookies(params)
     if not cookie_header:
         return {"authenticated": False, "error": "no cookies"}
@@ -292,7 +296,7 @@ async def check_session(**params) -> dict:
 
     return {
         "authenticated": True,
-        "domain": "uber.com",
+        "at": _UBER,
         "identifier": user.get("email") or user.get("uuid"),
         "display": f"{user.get('firstName', '')} {user.get('lastName', '')}".strip(),
     }
@@ -550,7 +554,7 @@ async def _eats_post(cookie_header: str, endpoint: str, body: dict | None = None
 # See requirements.md for full API shape documentation.
 # ---------------------------------------------------------------------------
 
-@returns({"authenticated": "boolean", "identifier": "string", "display": "string", "domain": "string"})
+@returns("account")
 @connection("eats")
 async def check_eats_session(**params) -> dict:
     """Validate Uber Eats session cookies."""
@@ -570,7 +574,7 @@ async def check_eats_session(**params) -> dict:
 
     return {
         "authenticated": True,
-        "domain": "ubereats.com",
+        "at": _UBER_EATS,
         "identifier": email or name or "unknown",
         "display": name or email,
     }
