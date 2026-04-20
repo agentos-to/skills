@@ -107,6 +107,9 @@ def _map_account(a: dict) -> dict:
     owner = a.get("owner") or {}
     return {
         "id": name,
+        "identifier": name,
+        "at": {"shape": "product", "url": "https://moltbook.com", "name": "Moltbook"},
+        "handle": name,
         "content": a.get("description"),
         "url": f"https://www.moltbook.com/u/{name}",
         "image": owner.get("x_avatar"),

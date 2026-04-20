@@ -1458,8 +1458,8 @@ async def whoami(**params) -> dict[str, Any]:
 
     return {
         "authenticated": True,
-        "domain": "amazon.com",
         "identifier": email or customer_id or display,
+        "at": {"shape": "product", "url": "https://amazon.com", "name": "Amazon"},
         "customerId": customer_id,
         "display": display,
         "email": email,

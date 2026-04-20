@@ -82,8 +82,8 @@ async def check_session(**params) -> dict:
                 first = tiles[0]
                 return {
                     "authenticated": True,
-                    "domain": "chase.com",
                     "identifier": first.get("accountId", ""),
+                    "at": {"shape": "product", "url": "https://chase.com", "name": "Chase"},
                     "display": first.get("nickname", ""),
                 }
 
@@ -135,8 +135,8 @@ def _normalize_account(t: dict) -> dict:
     acct_id = t.get("accountId", "")
     result: dict = {
         "id": acct_id,
-        "issuer": "chase.com",
         "identifier": acct_id,
+        "at": {"shape": "product", "url": "https://chase.com", "name": "Chase"},
         "accountId": acct_id,
         "name": t.get("nickname") or f"Chase {acct_type}",
         "accountType": acct_type,

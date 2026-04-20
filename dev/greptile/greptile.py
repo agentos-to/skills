@@ -163,8 +163,8 @@ def _member_to_account(item: dict) -> dict:
     itype = (item.get("type") or "member").lower()
     is_invite = itype == "invite" or bool(item.get("token"))
     return {
-        "issuer": "greptile.com",
         "identifier": email,
+        "at": {"shape": "product", "url": "https://greptile.com", "name": "Greptile"},
         "email": email,
         "handle": email,
         "displayName": email,

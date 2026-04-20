@@ -67,7 +67,13 @@ def _classify_account(data, credit_ids):
 
 @returns("account[]")
 async def load_accounts(**params):
-    """List all financial accounts with balances and institution info"""
+    """List all financial accounts with balances and institution info.
+
+    DEFERRED migration to (at, identifier) — these are bank accounts, not
+    logins. Waiting for account-split project to introduce
+    `financial_account` shape with `held_at: organization` + `accessedVia:
+    login` edges. See _roadmap/p1/account-split/proposal.md.
+    """
     credit_ids = _load_credit_ids()
     pattern = os.path.join(WIDGET_DIR, "widgets-account-account_*.json")
     accounts = []
