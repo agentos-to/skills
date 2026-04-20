@@ -829,6 +829,8 @@ async def _get_public_profile(user_id: str, limit: int) -> dict[str, Any]:
     uid = parse_int(user_id)
     result: dict[str, Any] = {
         "id": uid,
+        "identifier": str(uid) if uid else user_id,
+        "at": {"shape": "product", "url": "https://goodreads.com", "name": "Goodreads"},
         "name": name or (title_match.group(1) if title_match else None),
         "handle": username or (title_match.group(2) if title_match else None),
         "url": f"https://goodreads.com/user/show/{uid}" if uid else None,

@@ -19,7 +19,8 @@ PER_PAGE_FRIENDS = 30
 PER_PAGE_BOOKS = 25
 
 # Goodreads is behind CloudFront — all requests need WAF headers.
-_H = http.headers(waf="cf", accept="html")
+# mode="navigate" for top-level HTML pages — /review/list/ rejects cors/fetch.
+_H = http.headers(waf="cf", mode="navigate", accept="html")
 
 # ---------------------------------------------------------------------------
 # Helpers
