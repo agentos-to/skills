@@ -289,7 +289,24 @@ async def list_orgs(**params) -> list:
 
 # -- Session check — called by account.check with auto-dispatch ----------------
 
-@returns({"authenticated": "boolean", "identifier": "string", "display": "string"})
+_CLAUDE_AI = {"shape": "product", "url": "https://claude.ai", "name": "Claude.ai"}
+
+
+def _pick_identity(orgs: list) -> tuple[str, str] | None:
+    """Return (identifier, display) from chat-capable org if any, else first org."""
+    for org in orgs:
+        if "chat" in org.get("capabilities", []):
+            name = org.get("name", "")
+            m = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", name)
+            val = m.group(0) if m else name
+            return val, val
+    if orgs:
+        name = orgs[0].get("name", "")
+        return name, name
+    return None
+
+
+@returns("account")
 @connection("web")
 async def check_session(**params) -> dict:
     """Verify Claude.ai session and identify the logged-in account.
@@ -303,39 +320,21 @@ async def check_session(**params) -> dict:
 
     try:
         async with _client(cookie_header) as client:
-            # Validate session: resolve org (probes lastActiveOrg, falls back to /api/organizations).
             await _resolve_org_uuid(client, cookie_header=cookie_header)
-            # Session is valid — resolve identity from orgs list.
             orgs = await _get_organizations(client)
-            return _identify_from_orgs(orgs)
     except Exception:
         return {"authenticated": False}
 
-
-def _identify_from_orgs(orgs: list) -> dict:
-    """Extract identity from the org list, preferring chat-capable orgs."""
-    for org in orgs:
-        if "chat" in org.get("capabilities", []):
-            name = org.get("name", "")
-            email = ""
-            m = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", name)
-            if m:
-                email = m.group(0)
-            return {
-                "authenticated": True,
-                "domain": "claude.ai",
-                "identifier": email or name,
-                "display": email or name,
-            }
-    if orgs:
-        name = orgs[0].get("name", "")
-        return {
-            "authenticated": True,
-            "domain": "claude.ai",
-            "identifier": name,
-            "display": name,
-        }
-    return {"authenticated": False}
+    picked = _pick_identity(orgs)
+    if not picked:
+        return {"authenticated": False}
+    identifier, display = picked
+    return {
+        "authenticated": True,
+        "at": _CLAUDE_AI,
+        "identifier": identifier,
+        "display": display,
+    }
 
 
 # -- Magic link extraction — pure string parsing, no browser needed ------------
