@@ -269,12 +269,19 @@ async def setup(**params) -> dict:
     }
 
 
-@returns({"id": "string", "name": "string", "email": "string"})
+@returns("account")
 async def whoami(**params) -> dict:
-    """Get current authenticated user."""
+    """Get current authenticated Linear user as an account node."""
     query = "{ viewer { id name email } }"
     data = await _gql(params, query)
-    return data["viewer"]
+    v = data["viewer"]
+    return {
+        "id": v.get("id"),
+        "identifier": v.get("email") or v.get("id"),
+        "at": {"shape": "product", "url": "https://linear.app", "name": "Linear"},
+        "displayName": v.get("name"),
+        "email": v.get("email"),
+    }
 
 
 @returns({"id": "string", "name": "string", "urlKey": "string"})
