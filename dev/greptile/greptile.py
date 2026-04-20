@@ -271,25 +271,33 @@ async def _resolve_tenant_id(cookie_header: str, tenant_id: str | None = None) -
 # ---------------------------------------------------------------------------
 
 
-@returns({"authenticated": "boolean", "identifier": "string", "display": "string"})
+@returns("account")
 @connection("dashboard")
 @timeout(15)
 async def check_session(*, auth: dict = None, **params) -> dict:
-    """Verify Greptile dashboard session and identify the logged-in user + current org."""
+    """Verify Greptile dashboard session and identify the logged-in user + current org.
+
+    Returns a full `account` node on success (id, at, identifier, email,
+    handle, displayName, accountType, ...) so the graph gets a real Greptile
+    login landed here rather than elsewhere. Preserves the
+    authenticated/identifier/display fields the Rust auth-bridge parses.
+    """
     cookies = (auth or {}).get("cookies", "")
     session = await _get_session(cookies)
     if not session:
-        return {"__result__": {"authenticated": False, "identifier": None, "display": None}}
+        return {"authenticated": False}
     user = session.get("user", {}) or {}
     org = _org_from_session(session)
     label = user.get("email")
     if org.get("name"):
         label = f"{user.get('email')} @ {org['name']} ({org.get('role','MEMBER')})"
-    return {"__result__": {
+    account = _greptile_account_from_user(user, org)
+    return {
+        **account,
         "authenticated": True,
-        "identifier": user.get("email"),
+        "identifier": user.get("email") or "",
         "display": label,
-    }}
+    }
 
 
 # ---------------------------------------------------------------------------
