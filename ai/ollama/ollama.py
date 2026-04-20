@@ -490,6 +490,9 @@ async def op_show_model(model: str, connection: dict | None = None, **kwargs) ->
 
 # ── Shape-native list/ps ─────────────────────────────────────────────────────
 
+_OLLAMA = {"shape": "product", "url": "https://ollama.com", "name": "Ollama"}
+
+
 @returns("model[]")
 @connection("api")
 @timeout(15)
@@ -499,6 +502,8 @@ async def list_models(connection: dict | None = None, **params) -> list[dict]:
     return [
         {
             "id": m.get("name"),
+            "name": m.get("name"),
+            "at": _OLLAMA,
             "published": m.get("modified_at"),
             "size": m.get("size"),
             "digest": m.get("digest"),
@@ -520,6 +525,8 @@ async def list_models_cli(connection: dict | None = None, **params) -> list[dict
     return [
         {
             "id": m.get("name"),
+            "name": m.get("name"),
+            "at": _OLLAMA,
             "published": m.get("modified_at"),
             "size": m.get("size"),
             "digest": m.get("digest"),

@@ -14,12 +14,16 @@ def _user_url(username: str) -> str:
     return f"{SITE}/user?id={username}"
 
 
+_HN = {"shape": "product", "url": "https://news.ycombinator.com", "name": "Hacker News"}
+
+
 def _map_hit(hit: dict) -> dict:
     """Map an Algolia search hit to shape-native post fields."""
     oid = hit.get("objectID", "")
     author = hit.get("author", "")
     return {
         "id": oid,
+        "at": _HN,
         "name": hit.get("title"),
         "content": hit.get("text"),
         "url": _post_url(oid),

@@ -9,11 +9,15 @@ def _auth_header(params):
     return {"Authorization": f"Bearer {key}"}
 
 
+_TODOIST = {"shape": "product", "url": "https://todoist.com", "name": "Todoist"}
+
+
 def _map_task(t: dict) -> dict:
     priority_raw = t.get("priority", 1)
     due = t.get("due") or {}
     return {
         "id": t.get("id"),
+        "at": _TODOIST,
         "name": t.get("content"),
         "content": t.get("description"),
         "priority": 5 - priority_raw,
@@ -29,6 +33,7 @@ def _map_task(t: dict) -> dict:
 def _map_project(p: dict) -> dict:
     return {
         "id": p.get("id"),
+        "at": _TODOIST,
         "name": p.get("name"),
         "color": p.get("color"),
         "parentId": p.get("parent_id"),

@@ -16,6 +16,7 @@ def _map_domain(d: dict) -> dict:
     fqdn = d.get("fqdn", "")
     return {
         "id": fqdn,
+        "name": fqdn,
         "url": f"https://{fqdn}" if fqdn else None,
         "status": d.get("status"),
         "registrar": "gandi",

@@ -10,6 +10,9 @@ def _auth_header(params: dict) -> dict:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
+_MOLTBOOK = {"shape": "product", "url": "https://www.moltbook.com", "name": "Moltbook"}
+
+
 def _map_post(p: dict) -> dict:
     author = p.get("author") or {}
     submolt = p.get("submolt") or {}
@@ -19,6 +22,7 @@ def _map_post(p: dict) -> dict:
     score = (p.get("upvotes") or 0) - (p.get("downvotes") or 0)
     result = {
         "id": pid,
+        "at": _MOLTBOOK,
         "name": p.get("title") or f"Post {pid}",
         "content": p.get("content"),
         "url": f"https://www.moltbook.com/post/{pid}",

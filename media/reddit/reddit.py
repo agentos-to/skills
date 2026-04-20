@@ -15,12 +15,16 @@ def _ts(epoch: int | float | None) -> str | None:
     return datetime.fromtimestamp(int(epoch), tz=timezone.utc).isoformat()
 
 
+_REDDIT = {"shape": "product", "url": "https://reddit.com", "name": "Reddit"}
+
+
 def _map_post(d: dict) -> dict:
     """Map a Reddit post/comment data dict to shape-native post fields."""
     author = d.get("author", "")
     subreddit = d.get("subreddit", "")
     return {
         "id": d.get("id"),
+        "at": _REDDIT,
         "name": d.get("title"),
         "content": d.get("selftext") or d.get("body"),
         "url": f"https://reddit.com{d['permalink']}" if d.get("permalink") else None,

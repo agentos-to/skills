@@ -57,10 +57,14 @@ _ISSUE_FIELDS_FULL = _ISSUE_FIELDS + """
 # ---------------------------------------------------------------------------
 
 
+_LINEAR = {"shape": "product", "url": "https://linear.app", "name": "Linear"}
+
+
 def _map_task(node):
     """Map a Linear issue GraphQL node to the task shape."""
     result = {
         "id": node["id"],
+        "at": _LINEAR,
         "name": node.get("title"),
         "content": node.get("description"),
         "remoteId": node.get("identifier"),
@@ -133,6 +137,7 @@ def _map_project(node):
     """Map a Linear project GraphQL node to the project shape."""
     return {
         "id": node["id"],
+        "at": _LINEAR,
         "name": node.get("name"),
         "state": node.get("state"),
     }
@@ -278,7 +283,7 @@ async def whoami(**params) -> dict:
     return {
         "id": v.get("id"),
         "identifier": v.get("email") or v.get("id"),
-        "at": {"shape": "product", "url": "https://linear.app", "name": "Linear"},
+        "at": _LINEAR,
         "displayName": v.get("name"),
         "email": v.get("email"),
     }

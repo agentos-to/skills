@@ -16,6 +16,7 @@ def _map_domain(d: dict) -> dict:
     domain = d.get("domain", "")
     return {
         "id": domain,
+        "name": domain,
         "url": f"https://{domain}" if domain else None,
         "status": d.get("status"),
         "registrar": "porkbun",
@@ -27,15 +28,17 @@ def _map_domain(d: dict) -> dict:
 
 def _map_dns_record(r: dict, domain: str = "") -> dict:
     rid = r.get("id", "")
-    name = r.get("name", "")
-    full_name = f"{name}.{domain}" if name and domain else (domain or name)
+    sub = r.get("name", "")
+    record_name = sub if sub else "@"
+    full_name = f"{sub}.{domain}" if sub and domain else (domain or sub)
     ttl = r.get("ttl")
     return {
         "id": f"{domain}:{rid}" if domain else str(rid),
         "name": full_name,
-        "content": f"{r.get('type', '')} {r.get('content', '')}",
-        "recordId": str(rid),
         "domain": domain,
+        "recordName": record_name,
+        "recordType": r.get("type"),
+        "recordId": str(rid),
         "type": r.get("type"),
         "content": r.get("content"),
         "ttl": int(ttl) if ttl is not None else None,

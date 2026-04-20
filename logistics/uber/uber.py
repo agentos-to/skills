@@ -441,6 +441,7 @@ async def get_trip(trip_id: str, **params) -> dict:
     out = {
         # Standard fields
         "id": trip.get("uuid") or trip.get("jobUUID"),
+        "at": _UBER,
         "name": waypoints[-1] if waypoints else trip_id,
         "image": result.get("mapURL"),
         "published": trip.get("beginTripTime"),
@@ -1450,9 +1451,11 @@ async def get_messages(order_uuid: str, **params) -> dict:
     head = data.get("head", "")
 
     if not body and not head:
-        return {"orderUuid": order_uuid, "messages": [], "status": "empty"}
+        return {"orderId": order_uuid, "at": _UBER_EATS, "orderUuid": order_uuid, "messages": [], "status": "empty"}
 
     return {
+        "orderId": order_uuid,
+        "at": _UBER_EATS,
         "orderUuid": order_uuid,
         "body": body,
         "head": head,

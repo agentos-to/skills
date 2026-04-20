@@ -339,8 +339,7 @@ async def list_members(*, tenant_external_id: str = None, query: str = "",
     data = _unwrap_trpc(resp, procedure="organization.searchPeople")
     items = data.get("items") or []
     members = [it for it in items if (it.get("type") or "").lower() == "member"]
-    accounts = [_member_to_account(it) for it in members]
-    return {"__result__": accounts}
+    return [_member_to_account(it) for it in members]
 
 
 @returns("invitation[]")

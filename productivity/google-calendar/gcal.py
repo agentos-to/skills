@@ -342,9 +342,12 @@ async def list_calendars(*, account=None, **params):
     headers = _auth_header(params)
     resp = await http.get(f"{BASE_URL}/users/me/calendarList", **http.headers(accept="json", extra=headers))
     items = (resp["json"] or {}).get("items", [])
+    gcal_product = {"shape": "product", "url": "https://calendar.google.com", "name": "Google Calendar"}
     return [
         {
             "id": c.get("id"),
+            "at": gcal_product,
+            "calendarId": c.get("id"),
             "name": c.get("summary"),
             "color": c.get("backgroundColor"),
             "isReadonly": c.get("accessRole") in ("freeBusyReader", "reader"),

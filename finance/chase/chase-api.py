@@ -214,6 +214,8 @@ def _normalize_transaction(t: dict, account_ref: dict) -> dict:
     signed_amount = amount if is_credit else -amount
 
     return {
+        "id": t.get("transactionIdentifier"),
+        "at": {"shape": "organization", "name": "Chase", "url": "https://chase.com"},
         "date": t.get("transactionDate"),
         "postDate": t.get("transactionPostDate"),
         "description": t.get("transactionDescription"),
