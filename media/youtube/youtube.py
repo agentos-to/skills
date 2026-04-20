@@ -67,7 +67,7 @@ def _map_flat_entry(e: dict) -> dict:
             "url": e.get("channel_url"),
         }
     if playlist_id:
-        result["add_to"] = {
+        result["addTo"] = {
             "id": playlist_id,
             "name": playlist,
             "url": f"{SITE}/playlist?list={playlist_id}",

@@ -216,15 +216,14 @@ def _normalize_transaction(t: dict, account_ref: dict) -> dict:
     return {
         "id": t.get("transactionIdentifier"),
         "at": {"shape": "organization", "name": "Chase", "url": "https://chase.com"},
-        "date": t.get("transactionDate"),
-        "postDate": t.get("transactionPostDate"),
-        "description": t.get("transactionDescription"),
+        "published": t.get("transactionDate"),
+        "postingDate": t.get("transactionPostDate"),
+        "name": t.get("transactionDescription"),
         "amount": signed_amount,
         "balance": t.get("runningLedgerBalanceAmount"),
         "category": t.get("etuStdExpenseCategoryName"),
         "type": t.get("etuStdTransactionGroupName"),
         "pending": t.get("pendingTransactionIndicator", False),
-        "transactionId": t.get("transactionIdentifier"),
         "account": account_ref,
     }
 

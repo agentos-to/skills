@@ -202,7 +202,7 @@ No JSON-LD or GraphQL endpoints are exposed publicly.
 - [x] `search_products` — HTML search result parsing
 - [x] `get_product` — product detail page parsing
 - [x] `list_orders` — order history with BeautifulSoup + anti-bot headers
-- [x] `check_session` / `whoami` — account identity extraction
+- [x] `check_session` — account identity extraction
 - [x] Siege bypass — strip `csd-key` cookie to force plain HTML
 - [x] `get_order` — full detail parsing with per-item prices, quantities, summary, tracking
 - [x] Pagination — `page` parameter, 10 per page, next-page detection

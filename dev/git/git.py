@@ -82,7 +82,7 @@ def _commits_with_stats(raw):
             if re.search(r"\d+ files? changed", line):
                 files, ins, dels = _parse_shortstat(line)
                 break
-        commit["files_changed"] = files
+        commit["filesChanged"] = files
         commit["additions"] = ins
         commit["deletions"] = dels
         results.append(commit)
@@ -129,7 +129,7 @@ async def get_git_commit(path, id, **params):
         if re.search(r"\d+ files? changed", line):
             files, ins, dels = _parse_shortstat(line)
             break
-    commit["files_changed"] = files
+    commit["filesChanged"] = files
     commit["additions"] = ins
     commit["deletions"] = dels
     return commit

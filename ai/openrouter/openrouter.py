@@ -37,18 +37,20 @@ def _ts_to_iso(ts) -> str | None:
 async def list_models(**params) -> list[dict]:
     """List available AI models from all providers via OpenRouter."""
     resp = await http.get(f"{API_BASE}/models", **http.headers(accept="json", extra=_auth_header(params)))
-    return [
-        {
+    results = []
+    for m in (resp["json"] or {}).get("data", []):
+        provider_slug = m.get("id", "").split("/")[0] if m.get("id") else None
+        at = {"shape": "organization", "name": provider_slug.title()} if provider_slug else None
+        results.append({
             "id": m.get("id"),
             "name": m.get("name"),
+            "at": at,
             "content": m.get("description"),
             "published": _ts_to_iso(m.get("created")),
-            "provider": m.get("id", "").split("/")[0] if m.get("id") else None,
             "modelType": "llm",
             "contextWindow": int(m["context_length"]) if m.get("context_length") else None,
-        }
-        for m in (resp["json"] or {}).get("data", [])
-    ]
+        })
+    return results
 
 
 def _to_openai_msg(msg: dict) -> dict:

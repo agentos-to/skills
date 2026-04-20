@@ -10,12 +10,15 @@ def _headers(params):
     return {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION}
 
 
+_ANTHROPIC = {"shape": "organization", "name": "Anthropic", "url": "https://anthropic.com"}
+
+
 def _map_model(m: dict) -> dict:
     return {
         "id": m.get("id"),
         "name": m.get("display_name"),
+        "at": _ANTHROPIC,
         "published": m.get("created_at"),
-        "provider": "anthropic",
         "modelType": "llm",
     }
 

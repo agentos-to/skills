@@ -79,7 +79,7 @@ def _map_task(node):
     if state.get("name"):
         result["state"] = state["name"]
     if state.get("type") == "started":
-        result["started_at"] = node.get("updatedAt")
+        result["startedAt"] = node.get("updatedAt")
 
     # Labels
     labels_data = node.get("labels") or {}
@@ -90,7 +90,7 @@ def _map_task(node):
     # Assignee as typed ref
     assignee = node.get("assignee")
     if assignee and assignee.get("id"):
-        result["assigned_to"] = {"id": assignee["id"], "name": assignee.get("name")}
+        result["assignedTo"] = {"id": assignee["id"], "name": assignee.get("name")}
 
     # Project as typed ref
     project = node.get("project")
@@ -125,7 +125,7 @@ def _map_task(node):
     inv_nodes = inv_relations.get("nodes") or []
     blocked_by = [r["issue"] for r in inv_nodes if r.get("issue", {}).get("id")]
     if blocked_by:
-        result["blocked_by"] = [
+        result["blockedBy"] = [
             {"id": b["id"], "name": b.get("identifier") or b.get("title")}
             for b in blocked_by
         ]

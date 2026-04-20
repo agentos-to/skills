@@ -677,7 +677,7 @@ async def get_draft(*, id, **params):
     draft = resp["json"]
     email = _map_email(draft.get("message", {}))
     if email:
-        email["draft_id"] = draft.get("id")
+        email["draftId"] = draft.get("id")
     return email
 
 
@@ -959,7 +959,7 @@ async def create_draft(*, to, subject, body, html_body=None, cc=None, bcc=None,
     draft = resp["json"]
     email = _map_email(draft.get("message", {}))
     if email:
-        email["draft_id"] = draft.get("id")
+        email["draftId"] = draft.get("id")
     return email
 
 
@@ -977,7 +977,7 @@ async def update_draft(*, id, to, subject, body, html_body=None, cc=None, bcc=No
     draft = resp["json"]
     email = _map_email(draft.get("message", {}))
     if email:
-        email["draft_id"] = draft.get("id")
+        email["draftId"] = draft.get("id")
     return email
 
 

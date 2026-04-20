@@ -1407,7 +1407,7 @@ def _parse_list_items(soup: HtmlElement) -> list[dict[str, Any]]:
 
 @returns("account")
 @connection("web")
-async def whoami(**params) -> dict[str, Any]:
+async def check_session(**params) -> dict[str, Any]:
     """Check session liveness and extract account identity.
 
     Fetches two pages:

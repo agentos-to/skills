@@ -52,12 +52,15 @@ async def _read_oauth_token() -> str:
     return token
 
 
+_ANTHROPIC = {"shape": "organization", "name": "Anthropic", "url": "https://anthropic.com"}
+
+
 def _map_model(m: dict) -> dict:
     return {
         "id": m.get("id"),
         "name": m.get("display_name"),
+        "at": _ANTHROPIC,
         "published": m.get("created_at"),
-        "provider": "anthropic",
         "modelType": "llm",
     }
 
