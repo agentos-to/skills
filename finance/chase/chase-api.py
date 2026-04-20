@@ -36,7 +36,7 @@ Required headers: x-jpmc-csrf-token: NONE, x-jpmc-channel: id=C30
 import json
 import sys
 
-from agentos import http, connection, returns, timeout, require_cookies
+from agentos import http, connection, returns, timeout, require_cookies, claims
 
 BASE = "https://secure.chase.com"
 
@@ -59,6 +59,7 @@ def _client(cookie_header: str):
 
 
 @returns("account")
+@claims("primary_user")
 @connection("web")
 @timeout(20)
 async def check_session(**params) -> dict:
@@ -91,6 +92,7 @@ async def check_session(**params) -> dict:
 
 
 @returns("financial_account[]")
+@claims("primary_user")
 @timeout(20)
 async def get_accounts(**params) -> list | dict:
     """List all Chase financial accounts with current balances. Returns checking, savings, and credit card accounts as `financial_account` nodes (distinct from the Chase login `account`). Each account carries an `accessedVia` edge to the Chase login used to read it."""
@@ -166,6 +168,7 @@ def _normalize_account(t: dict, login_ref: dict) -> dict:
 
 
 @returns("transaction[]")
+@claims("primary_user")
 @timeout(20)
 async def get_transactions(*, account_id, limit=30, **params) -> list | dict:
     """List recent transactions for a Chase checking or savings account (DDA accounts only). Returns transactions with date, description, signed amount (negative=debit), running balance, and category. Credit card transactions require a different endpoint (not yet implemented).

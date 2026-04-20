@@ -9,7 +9,7 @@ Separate from public_graph.py which handles public GraphQL/Apollo data.
 import re
 from typing import Any
 
-from agentos import get_cookies, http, molt, connection, provides, returns, timeout, email_lookup, parse_date, parse_int
+from agentos import get_cookies, http, molt, connection, provides, returns, timeout, email_lookup, parse_date, parse_int, claims
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -120,6 +120,7 @@ _GOODREADS = {"shape": "product", "url": "https://goodreads.com", "name": "Goodr
 
 
 @returns("account")
+@claims("primary_user")
 @connection("web")
 @timeout(15)
 async def check_session(**params) -> dict[str, Any]:

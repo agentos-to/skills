@@ -3,7 +3,7 @@
 import json as _json
 import re as _re
 import uuid as uuid_mod
-from agentos import get_cookies, http, connection, provides, returns, timeout, geocoding, require_cookies
+from agentos import get_cookies, http, connection, provides, returns, timeout, geocoding, require_cookies, claims
 
 # ---------------------------------------------------------------------------
 # Rides API — GraphQL at riders.uber.com
@@ -278,6 +278,7 @@ _UBER_EATS = {"shape": "product", "url": "https://ubereats.com", "name": "Uber E
 
 
 @returns("account")
+@claims("primary_user")
 @connection("web")
 async def check_session(**params) -> dict:
     """Validate Uber session and return account identity."""
@@ -556,6 +557,7 @@ async def _eats_post(cookie_header: str, endpoint: str, body: dict | None = None
 # ---------------------------------------------------------------------------
 
 @returns("account")
+@claims("primary_user")
 @connection("eats")
 async def check_eats_session(**params) -> dict:
     """Validate Uber Eats session cookies."""

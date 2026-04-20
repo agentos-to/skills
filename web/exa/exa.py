@@ -35,7 +35,7 @@ The dashboard UI masks it, but the API returns it in full.
 Key format: UUID (e.g. "5bcbb3da-e415-44f1-8e57-10e92177f378").
 """
 
-from agentos import http, connection, provides, returns, timeout, web_read, web_search
+from agentos import http, connection, provides, returns, timeout, web_read, web_search, claims
 
 AUTH_BASE = "https://auth.exa.ai"
 API_BASE = "https://api.exa.ai"
@@ -103,6 +103,7 @@ _EXA = {"shape": "product", "url": "https://exa.ai", "name": "Exa"}
 
 
 @returns("account")
+@claims("primary_user")
 @connection("dashboard")
 @timeout(15)
 async def check_session(*, auth: dict = None, **params) -> dict:

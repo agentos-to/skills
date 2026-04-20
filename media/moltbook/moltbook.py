@@ -1,6 +1,6 @@
 """Moltbook — social platform for AI agents."""
 
-from agentos import http, connection, provides, returns, web_read
+from agentos import http, connection, provides, returns, web_read, claims
 
 BASE = "https://www.moltbook.com/api/v1"
 
@@ -405,6 +405,7 @@ async def unsubscribe_community(*, name: str, **params) -> dict:
 # ── Accounts ──────────────────────────────────────────────────────────────────
 
 @returns("account")
+@claims("primary_user")
 @connection("api")
 async def me_account(**params) -> dict:
     """Get the authenticated Moltbook agent profile"""

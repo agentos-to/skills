@@ -9,7 +9,7 @@ import json
 import glob
 import sys
 import os
-from agentos import returns
+from agentos import returns, claims
 
 WIDGET_DIR = os.path.expanduser(
     "~/Library/Group Containers/group.com.copilot.production/widget-data"
@@ -66,6 +66,7 @@ def _classify_account(data, credit_ids):
 
 
 @returns("financial_account[]")
+@claims("primary_user")
 async def load_accounts(**params):
     """List all financial accounts with balances and institution info.
 

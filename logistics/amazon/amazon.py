@@ -25,7 +25,7 @@ import asyncio
 import time
 from typing import Any
 
-from agentos import get_cookies, http, molt, connection, returns, timeout, parse_int, require_cookies
+from agentos import get_cookies, http, molt, connection, returns, timeout, parse_int, require_cookies, claims
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -1406,6 +1406,7 @@ def _parse_list_items(soup: HtmlElement) -> list[dict[str, Any]]:
 
 
 @returns("account")
+@claims("primary_user")
 @connection("web")
 async def check_session(**params) -> dict[str, Any]:
     """Check session liveness and extract account identity.

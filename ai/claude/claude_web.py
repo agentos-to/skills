@@ -17,7 +17,7 @@ Required headers (bypass Cloudflare + match expected browser client):
 import base64
 import re
 
-from agentos import get_cookies, http, connection, provides, returns, timeout, web_read, parse_cookie
+from agentos import get_cookies, http, connection, provides, returns, timeout, web_read, parse_cookie, claims
 
 BASE_URL = "https://claude.ai"
 
@@ -307,6 +307,7 @@ def _pick_identity(orgs: list) -> tuple[str, str] | None:
 
 
 @returns("account")
+@claims("primary_user")
 @connection("web")
 async def check_session(**params) -> dict:
     """Verify Claude.ai session and identify the logged-in account.

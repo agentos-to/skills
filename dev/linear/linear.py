@@ -4,7 +4,7 @@
 """
 
 import re
-from agentos import http, provides, returns, web_read
+from agentos import http, provides, returns, web_read, claims
 
 API_URL = "https://api.linear.app/graphql"
 
@@ -275,6 +275,7 @@ async def setup(**params) -> dict:
 
 
 @returns("account")
+@claims("primary_user")
 async def whoami(**params) -> dict:
     """Get current authenticated Linear user as an account node."""
     query = "{ viewer { id name email } }"
