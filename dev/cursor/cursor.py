@@ -604,7 +604,7 @@ async def uninstall_mcp(client="cursor", **params):
 # ── Operation entry points ─────────────────────────────────────────────────────
 
 
-@returns("session[]")
+@returns("conversation[]")
 @timeout(60)
 async def op_list_sessions(**params):
     """List sessions from JSONL transcripts (fast, sub-second)."""
@@ -616,7 +616,7 @@ async def op_list_sessions(**params):
     )
 
 
-@returns("session[]")
+@returns("conversation[]")
 @timeout(300)
 async def op_backfill_session(workspace=None, **params):
     """List sessions including full SQLite history."""
@@ -633,7 +633,7 @@ async def op_backfill_session(workspace=None, **params):
     )
 
 
-@returns("session")
+@returns("conversation")
 async def op_get_session(id, **params):
     """Get a session by UUID (checks JSONL then SQLite)."""
     conv = await _get_session_by_id(id)
