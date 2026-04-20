@@ -7,6 +7,7 @@ No auth needed — local files only.
 """
 
 import asyncio
+import glob
 import json
 import os
 import sys
@@ -33,6 +34,25 @@ def _load_categories():
         return {}
 
 
+def _load_account_institutions():
+    """Map account_id → institutionId from widget JSON files.
+
+    Used to construct the `account → financial_account` relation on each
+    transaction with the same `(at, identifier)` tuple copilot-accounts
+    emits, so dedup matches.
+    """
+    pattern = os.path.join(WIDGET_DIR, "widgets-account-account_*.json")
+    out = {}
+    for path in glob.glob(pattern):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+            out[d["id"]] = d.get("institutionId") or "copilot"
+        except Exception:
+            pass
+    return out
+
+
 @returns("transaction[]")
 async def fetch_transactions(account_id=None, limit=100, query=None, **_kwargs):
     """Search transactions by merchant name or notes, with category tags (emoji + color)
@@ -42,6 +62,7 @@ async def fetch_transactions(account_id=None, limit=100, query=None, **_kwargs):
             limit:
         """
     categories = _load_categories()
+    account_institutions = _load_account_institutions()
 
     base_sql = """
         SELECT
@@ -106,6 +127,20 @@ async def fetch_transactions(account_id=None, limit=100, query=None, **_kwargs):
             })
 
         r["tags"] = tags
+
+        # Link to the financial_account this transaction posted to.
+        # Same (at, identifier) tuple copilot-accounts emits so the engine
+        # dedups to one financial_account node per Copilot account.
+        acct_id = r.get("account_id")
+        inst_id = account_institutions.get(acct_id) if acct_id else None
+        if acct_id and inst_id:
+            inst_name = inst_id.replace("_", " ").title()
+            r["account"] = {
+                "shape": "financial_account",
+                "at": {"shape": "organization", "name": inst_name, "url": f"https://{inst_id}.com"},
+                "identifier": acct_id,
+            }
+
         results.append(r)
 
     return results

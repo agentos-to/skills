@@ -90,10 +90,10 @@ async def check_session(**params) -> dict:
     return {"authenticated": False, "error": "no account tiles"}
 
 
-@returns("account[]")
+@returns("financial_account[]")
 @timeout(20)
 async def get_accounts(**params) -> list | dict:
-    """List all Chase accounts with current balances. Returns checking, savings, and credit card accounts. Balance = current balance. Available = available to spend/credit available."""
+    """List all Chase financial accounts with current balances. Returns checking, savings, and credit card accounts as `financial_account` nodes (distinct from the Chase login `account`). Each account carries an `accessedVia` edge to the Chase login used to read it."""
     cookie_header = require_cookies(params, "list_accounts")
 
     async with _client(cookie_header) as client:
@@ -118,10 +118,20 @@ async def get_accounts(**params) -> list | dict:
         cache_urls = [e.get("url", "") for e in data.get("cache", []) if isinstance(e, dict)]
         return {"error": "No accountTiles in response", "_cacheUrls": cache_urls}
 
-    return [_normalize_account(t) for t in tiles]
+    # The Chase login is the account the current session authenticates as.
+    # check_session uses the first account tile's accountId as its identifier,
+    # so use the same convention here to dedup against the same login node.
+    session_identifier = tiles[0].get("accountId", "")
+    login_ref = {
+        "shape": "account",
+        "at": {"shape": "product", "url": "https://chase.com", "name": "Chase"},
+        "identifier": session_identifier,
+    }
+
+    return [_normalize_account(t, login_ref) for t in tiles]
 
 
-def _normalize_account(t: dict) -> dict:
+def _normalize_account(t: dict, login_ref: dict) -> dict:
     detail = t.get("tileDetail", {})
     tile_type = t.get("accountTileType", "")
 
@@ -136,7 +146,8 @@ def _normalize_account(t: dict) -> dict:
     result: dict = {
         "id": acct_id,
         "identifier": acct_id,
-        "at": {"shape": "product", "url": "https://chase.com", "name": "Chase"},
+        "at": {"shape": "organization", "name": "Chase", "url": "https://chase.com"},
+        "accessedVia": login_ref,
         "accountId": acct_id,
         "name": t.get("nickname") or f"Chase {acct_type}",
         "accountType": acct_type,
@@ -189,10 +200,15 @@ async def get_transactions(*, account_id, limit=30, **params) -> list | dict:
             return {"error": f"HTTP {resp['status']}"}
         data = resp["json"]
 
-    return [_normalize_transaction(t) for t in data.get("transactions", [])]
+    account_ref = {
+        "shape": "financial_account",
+        "at": {"shape": "organization", "name": "Chase", "url": "https://chase.com"},
+        "identifier": account_id,
+    }
+    return [_normalize_transaction(t, account_ref) for t in data.get("transactions", [])]
 
 
-def _normalize_transaction(t: dict) -> dict:
+def _normalize_transaction(t: dict, account_ref: dict) -> dict:
     amount = t.get("transactionAmount", 0)
     is_credit = t.get("creditDebitCode", "DR") == "CR"
     signed_amount = amount if is_credit else -amount
@@ -207,6 +223,7 @@ def _normalize_transaction(t: dict) -> dict:
         "type": t.get("etuStdTransactionGroupName"),
         "pending": t.get("pendingTransactionIndicator", False),
         "transactionId": t.get("transactionIdentifier"),
+        "account": account_ref,
     }
 
 

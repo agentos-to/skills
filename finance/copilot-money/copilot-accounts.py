@@ -65,14 +65,14 @@ def _classify_account(data, credit_ids):
     return tags
 
 
-@returns("account[]")
+@returns("financial_account[]")
 async def load_accounts(**params):
     """List all financial accounts with balances and institution info.
 
-    DEFERRED migration to (at, identifier) — these are bank accounts, not
-    logins. Waiting for account-split project to introduce
-    `financial_account` shape with `held_at: organization` + `accessedVia:
-    login` edges. See _roadmap/p1/account-split/proposal.md.
+    Each account is a `financial_account` node with `(at, identifier)`
+    identity: `at` is the institution (Coinbase, Chase, etc. — an
+    organization node, or "Copilot" when Copilot doesn't expose the
+    underlying bank), `identifier` is Copilot's account id hash.
     """
     credit_ids = _load_credit_ids()
     pattern = os.path.join(WIDGET_DIR, "widgets-account-account_*.json")
@@ -86,14 +86,29 @@ async def load_accounts(**params):
                 continue
 
             tags = _classify_account(data, credit_ids)
+            institution_id = data.get("institutionId") or "copilot"
+            # Copilot exposes institution slugs (e.g. "coinbase", "chase"),
+            # not full names — use the account name as a human label on the
+            # institution node if that's the only signal we have.
+            institution_name = institution_id.replace("_", " ").title()
+
+            # Map classification tags to accountType. "credit" is a card
+            # account, "checking"/"savings"/"brokerage"/"crypto"/"hsa"
+            # are the balance-account flavours.
+            account_type = next(
+                (t for t in tags if t in ("credit", "checking", "savings", "brokerage", "crypto", "hsa")),
+                "brokerage",
+            )
 
             accounts.append({
                 "id": data.get("id"),
+                "identifier": data.get("id"),
+                "at": {"shape": "organization", "name": institution_name, "url": f"https://{institution_id}.com"},
                 "name": data.get("name"),
-                "mask": data.get("mask"),
+                "last4": data.get("mask"),
                 "balance": data.get("balance"),
-                "limit": data.get("limit") or None,
-                "institutionId": data.get("institutionId"),
+                "creditLimit": data.get("limit") or None,
+                "accountType": account_type,
                 "color": data.get("color"),
                 "user_tag": tags,
             })
