@@ -116,7 +116,10 @@ def _require_cookies(cookie_header: str | None, params: dict | None, op: str) ->
 # ---------------------------------------------------------------------------
 
 
-@returns({"authenticated": "boolean", "identifier": "string", "display": "string"})
+_GOODREADS = {"shape": "product", "url": "https://goodreads.com", "name": "Goodreads"}
+
+
+@returns("account")
 @connection("web")
 @timeout(15)
 async def check_session(**params) -> dict[str, Any]:
@@ -152,7 +155,7 @@ async def check_session(**params) -> dict[str, Any]:
     if user_id:
         return {
             "authenticated": True,
-            "domain": "goodreads.com",
+            "at": _GOODREADS,
             "identifier": user_id,
             "display": name,
         }
