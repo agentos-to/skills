@@ -99,7 +99,10 @@ def _extract_set_cookies(resp: dict) -> dict:
 # Operations — called by the Python executor with kwargs
 # ---------------------------------------------------------------------------
 
-@returns({"authenticated": "boolean", "identifier": "string", "display": "string"})
+_EXA = {"shape": "product", "url": "https://exa.ai", "name": "Exa"}
+
+
+@returns("account")
 @connection("dashboard")
 @timeout(15)
 async def check_session(*, auth: dict = None, **params) -> dict:
@@ -108,13 +111,14 @@ async def check_session(*, auth: dict = None, **params) -> dict:
     async with _dashboard_client(cookies) as client:
         session = await _check_session(client)
     if not session:
-        return {"__result__": {"authenticated": False, "identifier": None, "display": None}}
+        return {"authenticated": False}
     user = session.get("user", {})
-    return {"__result__": {
+    return {
         "authenticated": True,
+        "at": _EXA,
         "identifier": user.get("email"),
         "display": user.get("name"),
-    }}
+    }
 
 
 @returns({"status": "string", "email": "string", "hint": "string"})
