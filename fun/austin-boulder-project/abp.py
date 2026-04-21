@@ -521,7 +521,6 @@ def _booking_to_entity(b: dict) -> dict:
         "startDate": b.get("startDT"),
         "endDate": b.get("endDT"),
         "timezone": AUSTIN_TZ_NAME,
-        "occurrenceDate": b.get("occurrenceDate"),
         "activityType": activity_name,
         "capacity": capacity,
         "spotsRemaining": spots,
