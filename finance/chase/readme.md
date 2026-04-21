@@ -1,12 +1,12 @@
 ---
 id: chase
 capabilities:
-  - http
+- http
 name: Chase Bank
-description: "Chase Bank accounts, balances, and transactions — checking, savings, and credit cards"
-color: "#117ACA"
-website: "https://www.chase.com"
-
+description: "Chase Bank accounts, balances, and transactions \u2014 checking, savings,\
+  \ and credit cards"
+color: '#117ACA'
+website: https://www.chase.com
 connections:
   web:
     auth:
@@ -31,24 +31,22 @@ connections:
             url: https://secure.chase.com/web/auth/dashboard#/dashboard/overview
           returns_to_agent: 'The Chase login page is open in the browser.
 
-            Ask the user to log in (username, password, MFA). Tell them to let you know when they can see their accounts dashboard.
+            Ask the user to log in (username, password, MFA). Tell them to let you
+            know when they can see their accounts dashboard.
 
             '
         - name: complete_login
           steps:
           - action: wait
             url_contains: /dashboard
-          returns_to_agent: 'Login confirmed. Cookie provider matchmaking can extract `.chase.com`
+          returns_to_agent: 'Login confirmed. Cookie provider matchmaking can extract
+            `.chase.com`
 
             cookies on the next API call. If multiple cookie providers are
 
             installed, ask the user which browser/provider to use.
 
             '
-
-test:
-  check_session:
-    skip: true
 ---
 
 # Chase Bank

@@ -9,7 +9,7 @@ Separate from public_graph.py which handles public GraphQL/Apollo data.
 import re
 from typing import Any
 
-from agentos import get_cookies, http, molt, connection, provides, returns, timeout, email_lookup, parse_date, parse_int, claims
+from agentos import claims, connection, email_lookup, get_cookies, http, molt, parse_date, parse_int, provides, returns, test, timeout
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -119,6 +119,7 @@ def _require_cookies(cookie_header: str | None, params: dict | None, op: str) ->
 _GOODREADS = {"shape": "product", "url": "https://goodreads.com", "name": "Goodreads"}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("web")
@@ -169,6 +170,7 @@ async def check_session(**params) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@test(params={'user_id': '26631647'}, account='26631647')
 @returns("person")
 @connection("web")
 @timeout(15)
@@ -181,6 +183,7 @@ async def get_person(*, user_id: str = "", **params) -> dict[str, Any]:
     return await _get_person(user_id=str(user_id), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @connection("web")
 @timeout(15)
@@ -204,6 +207,7 @@ def _resolve_user_id(user_id: str, params: dict) -> str:
     return uid
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @connection("web")
 @timeout(60)
@@ -217,6 +221,7 @@ async def list_friends(*, user_id: str = "", page: int = 0, **params) -> list[di
     return await _list_friends(user_id=_resolve_user_id(user_id, params), page=int(page), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("book[]")
 @connection("web")
 @timeout(60)
@@ -232,6 +237,7 @@ async def list_books(*, user_id: str = "", shelf: str = "all", sort: str = "date
     return await _list_books(user_id=_resolve_user_id(user_id, params), shelf=str(shelf), sort=str(sort), page=int(page), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("review[]")
 @connection("web")
 @timeout(60)
@@ -246,6 +252,7 @@ async def list_reviews(*, user_id: str = "", sort: str = "date", page: int = 0, 
     return await _list_reviews(user_id=_resolve_user_id(user_id, params), sort=str(sort), page=int(page), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("shelf[]")
 @connection("web")
 @timeout(15)
@@ -258,6 +265,7 @@ async def list_shelves(*, user_id: str = "", **params) -> list[dict[str, Any]]:
     return await _list_shelves(user_id=_resolve_user_id(user_id, params), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("book[]")
 @connection("web")
 @timeout(60)
@@ -272,6 +280,7 @@ async def list_shelf_books(*, user_id: str = "", shelf_name: str = "", page: int
     return await _list_shelf_books(user_id=_resolve_user_id(user_id, params), shelf_name=str(shelf_name), page=int(page), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @provides(email_lookup)
 @connection("web")
@@ -285,6 +294,7 @@ async def resolve_email(*, email: str = "", **params) -> list[dict[str, Any]]:
     return await _resolve_email(email=str(email), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("group[]")
 @connection("web")
 async def list_groups(**params) -> list[dict[str, Any]]:
@@ -292,6 +302,7 @@ async def list_groups(**params) -> list[dict[str, Any]]:
     return await _list_groups(params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @connection("web")
 @timeout(15)
@@ -304,6 +315,7 @@ async def list_following(*, user_id: str = "", **params) -> list[dict[str, Any]]
     return await _list_following(user_id=_resolve_user_id(user_id, params), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @connection("web")
 @timeout(15)
@@ -316,6 +328,7 @@ async def list_followers(*, user_id: str = "", **params) -> list[dict[str, Any]]
     return await _list_followers(user_id=_resolve_user_id(user_id, params), params=params)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("quote[]")
 @connection("web")
 @timeout(15)

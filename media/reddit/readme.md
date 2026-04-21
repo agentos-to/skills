@@ -1,14 +1,13 @@
 ---
 id: reddit
 capabilities:
-  - http
+- http
 name: Reddit
-description: "Read public Reddit communities, posts, and comments"
-color: "#FF4500"
-website: "https://reddit.com"
-privacy_url: "https://www.reddit.com/policies/privacy-policy"
-terms_url: "https://www.redditinc.com/policies/user-agreement"
-
+description: Read public Reddit communities, posts, and comments
+color: '#FF4500'
+website: https://reddit.com
+privacy_url: https://www.reddit.com/policies/privacy-policy
+terms_url: https://www.redditinc.com/policies/user-agreement
 sources:
   images:
   - styles.redditmedia.com
@@ -19,20 +18,6 @@ sources:
   - b.thumbs.redditmedia.com
   image_headers:
     Referer: https://www.reddit.com/
-
-test:
-  list_posts:
-    params:
-      subreddit: programming
-      sort: hot
-      limit: 3
-  get_post:
-    params:
-      id: 1qoxwdt
-      url: null
-  get_community:
-    params:
-      subreddit: programming
 ---
 
 # Reddit

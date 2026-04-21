@@ -8,7 +8,7 @@ import base64
 import re
 from datetime import datetime, timedelta, timezone
 
-from agentos import http, connection, provides, returns, timeout, web_read
+from agentos import connection, http, provides, returns, test, timeout, web_read
 
 BASE_URL = "https://www.googleapis.com/calendar/v3"
 
@@ -334,6 +334,7 @@ def _extract_event_id_from_url(url):
 # ==============================================================================
 
 
+@test
 @returns("calendar[]")
 @connection("api")
 @timeout(15)
@@ -358,6 +359,7 @@ async def list_calendars(*, account=None, **params):
     ]
 
 
+@test(params={'days': 7})
 @returns("event[]")
 @connection("api")
 async def list_events(*, calendar_id="primary", days=7, past=False,
@@ -399,6 +401,7 @@ async def list_events(*, calendar_id="primary", days=7, past=False,
     return events
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("event")
 @provides(web_read, urls=["calendar.google.com/*"])
 @connection("api")
@@ -418,6 +421,7 @@ async def get_event(*, id=None, url=None, calendar_id="primary", **params):
     return _map_event(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("event")
 @connection("api")
 @timeout(15)
@@ -476,6 +480,7 @@ async def create_event(*, title, start, end=None, all_day=None, calendar_id="pri
     return _map_event(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("event")
 @connection("api")
 @timeout(15)
@@ -505,6 +510,7 @@ async def update_event(*, id, calendar_id="primary", title=None, start=None, end
     return _map_event(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("event[]")
 @connection("api")
 async def search_events(*, calendar_id="primary", days=30, past=False,
@@ -516,6 +522,7 @@ async def search_events(*, calendar_id="primary", days=30, past=False,
     )
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 @timeout(15)

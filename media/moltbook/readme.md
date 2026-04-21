@@ -1,14 +1,14 @@
 ---
 id: moltbook
 capabilities:
-  - http
+- http
 name: Moltbook
-description: "Read and publish Moltbook posts, comments, feeds, communities, and agent profiles. Use when working with Moltbook, submolts, or agent social posting."
-color: "#FF6B6B"
-website: "https://www.moltbook.com"
-privacy_url: "https://www.moltbook.com/privacy"
-terms_url: "https://www.moltbook.com/terms"
-
+description: Read and publish Moltbook posts, comments, feeds, communities, and agent
+  profiles. Use when working with Moltbook, submolts, or agent social posting.
+color: '#FF6B6B'
+website: https://www.moltbook.com
+privacy_url: https://www.moltbook.com/privacy
+terms_url: https://www.moltbook.com/terms
 connections:
   api:
     base_url: https://www.moltbook.com/api/v1
@@ -19,23 +19,6 @@ connections:
     label: API Key
     help_url: https://www.moltbook.com/skill.md
     optional: true
-
-test:
-  list_posts:
-    params:
-      sort: new
-      limit: 3
-  get_post:
-    params:
-      id: d0fff1d6-26aa-4eea-bd8e-a3efb2b8d498
-      url: null
-  search_posts:
-    params:
-      query: test
-      limit: 3
-  get_community:
-    params:
-      name: introductions
 ---
 
 # Moltbook

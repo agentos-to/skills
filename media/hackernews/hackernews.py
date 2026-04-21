@@ -1,6 +1,6 @@
 """Hacker News — public Algolia API, no auth required."""
 
-from agentos import http, provides, returns, web_read, web_search
+from agentos import http, provides, returns, test, web_read, web_search
 
 BASE = "https://hn.algolia.com/api/v1"
 SITE = "https://news.ycombinator.com"
@@ -82,6 +82,7 @@ def _map_item(item: dict) -> dict:
     }
 
 
+@test(params={"feed": "front", "limit": 3})
 @returns("post[]")
 async def list_posts(feed: str = "front", limit: int = 30, **params) -> list[dict]:
     """List Hacker News stories by feed type.
@@ -120,6 +121,7 @@ async def search_posts(query: str, limit: int = 30, **params) -> list[dict]:
     return [_map_hit(h) for h in (resp["json"] or {}).get("hits", [])]
 
 
+@test(params={"id": "1"})
 @returns("post")
 @provides(web_read, urls=["news.ycombinator.com/item*"])
 async def get_post(id: str = None, url: str = None, **params) -> dict:

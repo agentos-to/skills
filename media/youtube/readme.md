@@ -1,12 +1,11 @@
 ---
 id: youtube
 capabilities:
-  - http
+- http
 name: YouTube
 description: Get video metadata and transcripts using yt-dlp
-color: "#FF0808"
-website: "https://youtube.com"
-
+color: '#FF0808'
+website: https://youtube.com
 sources:
   images:
   - ytimg.com
@@ -15,27 +14,6 @@ sources:
   frames:
   - https://www.youtube.com
   - https://www.youtube-nocookie.com
-
-test:
-  search_videos:
-    params:
-      query: claude anthropic
-      limit: 3
-  # yt-dlp-driven ops are slow + occasionally flaky; keep the sweep fast.
-  search_recent_video:
-    skip: true
-  list_videos:
-    skip: true
-  get_video:
-    skip: true
-  transcript_video:
-    skip: true
-  get_channel:
-    skip: true
-  get_avatar_channel:
-    skip: true
-  list_posts:
-    skip: true
 ---
 
 # YouTube

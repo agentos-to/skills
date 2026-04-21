@@ -1,17 +1,16 @@
 ---
 id: amazon
 capabilities:
-  - http
+- http
 name: Amazon
-description: "Search products, get details, and access your Amazon account"
-color: "#FF9900"
-website: "https://www.amazon.com"
-
+description: Search products, get details, and access your Amazon account
+color: '#FF9900'
+website: https://www.amazon.com
 connections:
   public:
-    description: Public Amazon pages and autocomplete API — no auth needed
+    description: "Public Amazon pages and autocomplete API \u2014 no auth needed"
   web:
-    description: Amazon account — orders, recommendations, account details
+    description: "Amazon account \u2014 orders, recommendations, account details"
     base_url: https://www.amazon.com
     auth:
       type: cookies
@@ -20,36 +19,10 @@ connections:
         check: check_session
     label: Amazon Session
     help_url: https://www.amazon.com/ap/signin
-
 product:
   name: Amazon
   website: https://amazon.com
   developer: Amazon.com, Inc.
-
-test:
-  search_suggestions:
-    params:
-      query: wireless headphones
-  search_products:
-    params:
-      query: usb c cable
-  get_product:
-    params:
-      asin: B0BQPNMXQV
-  list_orders:
-    skip: true
-  get_order:
-    skip: true
-  buy_again:
-    skip: true
-  subscriptions:
-    skip: true
-  list_lists:
-    skip: true
-  get_list:
-    skip: true
-  check_session:
-    skip: true
 ---
 
 # Amazon

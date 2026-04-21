@@ -36,7 +36,7 @@ Required headers: x-jpmc-csrf-token: NONE, x-jpmc-channel: id=C30
 import json
 import sys
 
-from agentos import http, connection, returns, timeout, require_cookies, claims
+from agentos import claims, connection, http, require_cookies, returns, test, timeout
 
 BASE = "https://secure.chase.com"
 
@@ -58,6 +58,7 @@ def _client(cookie_header: str):
 
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("web")

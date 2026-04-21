@@ -1,14 +1,13 @@
 ---
 id: serpapi
 capabilities:
-  - http
+- http
 name: SerpAPI
-description: "Google search results API — flights, hotels, web search, and more"
-color: "#0FA47F"
-website: "https://serpapi.com"
-privacy_url: "https://serpapi.com/privacy"
-terms_url: "https://serpapi.com/terms-and-conditions"
-
+description: "Google search results API \u2014 flights, hotels, web search, and more"
+color: '#0FA47F'
+website: https://serpapi.com
+privacy_url: https://serpapi.com/privacy
+terms_url: https://serpapi.com/terms-and-conditions
 connections:
   api:
     base_url: https://serpapi.com
@@ -18,19 +17,6 @@ connections:
         api_key: .auth.key
     label: API Key
     help_url: https://serpapi.com/manage-api-key
-
-test:
-  # All ops consume API quota — skip by default; wire per-session when actively testing.
-  search_offers:
-    skip: true
-  list_offers:
-    skip: true
-  get_offer:
-    skip: true
-  get_booking_options:
-    skip: true
-  get_price_insights:
-    skip: true
 ---
 
 # SerpAPI

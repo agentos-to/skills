@@ -1,6 +1,6 @@
 """SerpAPI — Google Flights search via the SerpAPI proxy."""
 
-from agentos import http, connection, provides, returns, flight_search
+from agentos import connection, flight_search, http, provides, returns, test
 
 SEARCH_URL = "https://serpapi.com/search"
 
@@ -119,6 +119,7 @@ async def _flight_get(query: dict, **params) -> dict:
     return resp["json"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("offer[]")
 @provides(flight_search)
 @connection("api")
@@ -168,6 +169,7 @@ async def search_offers(*, departure_id: str, arrival_id: str, outbound_date: st
     return [_map_offer(r) for r in (data.get("other_flights") or [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("offer[]")
 @connection("api")
 async def list_offers(*, departure_id: str, arrival_id: str, outbound_date: str, return_date: str = None, type: int = 1, travel_class: int = 1, currency: str = "USD", hl: str = "en", **params) -> list[dict]:
@@ -198,6 +200,7 @@ async def list_offers(*, departure_id: str, arrival_id: str, outbound_date: str,
     return [_map_offer(r) for r in (data.get("best_flights") or [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("offer[]")
 @connection("api")
 async def get_offer(*, departure_token: str, currency: str = "USD", hl: str = "en", **params) -> list[dict]:
@@ -218,6 +221,7 @@ async def get_offer(*, departure_token: str, currency: str = "USD", hl: str = "e
     return [_map_offer(r) for r in (data.get("other_flights") or [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"bookingOptions": "array", "price": "number"})
 @connection("api")
 async def get_booking_options(*, booking_token: str, currency: str = "USD", hl: str = "en", **params) -> dict:
@@ -241,6 +245,7 @@ async def get_booking_options(*, booking_token: str, currency: str = "USD", hl: 
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"lowestPrice": "number", "priceLevel": "string", "typicalPriceRange": "array", "priceHistory": "array"})
 @connection("api")
 async def get_price_insights(*, departure_id: str, arrival_id: str, outbound_date: str, return_date: str = None, type: int = 1, currency: str = "USD", **params) -> dict:

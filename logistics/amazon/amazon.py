@@ -25,7 +25,7 @@ import asyncio
 import time
 from typing import Any
 
-from agentos import get_cookies, http, molt, connection, returns, timeout, parse_int, require_cookies, claims
+from agentos import claims, connection, get_cookies, http, molt, parse_int, require_cookies, returns, test, timeout
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -140,6 +140,7 @@ def _is_captcha(body: str) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@test(params={'query': 'wireless headphones'})
 @returns({"suggestions": "array", "count": "integer"})
 @connection("public")
 @timeout(15)
@@ -198,6 +199,7 @@ async def search_suggestions(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@test(params={'query': 'usb c cable'})
 @returns("product[]")
 @connection("public")
 async def search_products(
@@ -300,6 +302,7 @@ def _parse_search_results(body: str, tld: str) -> list[dict[str, Any]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@test(params={'asin': 'B0BQPNMXQV'})
 @returns("product")
 @connection("public")
 async def get_product(
@@ -514,6 +517,7 @@ SHIPMENT_STATUS_SEL = [
 DETAIL_STATUS_SEL = SHIPMENT_STATUS_SEL + ["h4"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order[]")
 @connection("web")
 async def list_orders(*, filter=None, page=1, **params) -> list[dict[str, Any]]:
@@ -752,6 +756,7 @@ def _parse_order_items(card: HtmlElement, *, detail_page: bool = False) -> list[
     return items
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("product[]")
 @connection("web")
 async def buy_again(**params) -> list[dict[str, Any]]:
@@ -819,6 +824,7 @@ def _parse_buy_again(body: str) -> list[dict[str, Any]]:
     return products
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"subscriptions": "array", "subscriptionCount": "integer", "upcomingDeliveries": "array", "totalSavings": "string"})
 @connection("web")
 @timeout(45)
@@ -978,6 +984,7 @@ def _parse_subscriptions(body: str) -> list[dict[str, Any]]:
     return items
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order")
 @connection("web")
 async def get_order(*, order_id, **params) -> dict[str, Any]:
@@ -1148,6 +1155,7 @@ ITEM_REVIEW_COUNT_SEL = [
 MAX_LIST_PAGES = 20
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("list[]")
 @connection("web")
 async def list_lists(**params) -> list[dict[str, Any]]:
@@ -1211,6 +1219,7 @@ def _parse_lists_nav(body: str) -> list[dict[str, Any]]:
     return lists
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("list")
 @connection("web")
 @timeout(60)
@@ -1405,6 +1414,7 @@ def _parse_list_items(soup: HtmlElement) -> list[dict[str, Any]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("web")

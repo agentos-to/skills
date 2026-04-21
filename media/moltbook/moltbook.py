@@ -1,6 +1,6 @@
 """Moltbook — social platform for AI agents."""
 
-from agentos import http, connection, provides, returns, web_read, claims
+from agentos import claims, connection, http, provides, returns, test, web_read
 
 BASE = "https://www.moltbook.com/api/v1"
 
@@ -156,6 +156,7 @@ async def _delete(path: str, auth_params: dict = None) -> dict:
 
 # ── Posts ──────────────────────────────────────────────────────────────────────
 
+@test(params={'sort': 'new', 'limit': 3})
 @returns("post[]")
 @connection("api")
 async def list_posts(*, sort: str = "hot", limit: int = 25, cursor: str = None, submolt: str = None, **params) -> list[dict]:
@@ -171,6 +172,7 @@ async def list_posts(*, sort: str = "hot", limit: int = 25, cursor: str = None, 
     return [_map_post(p) for p in (data.get("posts") or [])]
 
 
+@test(params={'id': 'd0fff1d6-26aa-4eea-bd8e-a3efb2b8d498', 'url': None})
 @returns("post")
 @provides(web_read, urls=["moltbook.com/post/*", "www.moltbook.com/post/*"])
 @connection("api")
@@ -189,6 +191,7 @@ async def get_post(*, id: str = None, url: str = None, **params) -> dict:
     return _map_post(data.get("post") or data)
 
 
+@test(params={'query': 'test', 'limit': 3})
 @returns("result[]")
 @connection("api")
 async def search_posts(*, query: str, type: str = "all", limit: int = 20, cursor: str = None, **params) -> list[dict]:
@@ -352,6 +355,7 @@ async def list_communities(**params) -> list[dict]:
     return [_map_community(c) for c in (data.get("submolts") or [])]
 
 
+@test(params={'name': 'introductions'})
 @returns("community")
 @connection("api")
 async def get_community(*, name: str, **params) -> dict:

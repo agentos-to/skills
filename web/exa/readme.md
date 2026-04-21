@@ -1,14 +1,13 @@
 ---
 id: exa
 capabilities:
-  - http
+- http
 name: Exa
 description: Semantic web search and content extraction
-color: "#1F40ED"
-website: "https://exa.ai"
-privacy_url: "https://exa.ai/privacy"
-terms_url: "https://exa.ai/terms"
-
+color: '#1F40ED'
+website: https://exa.ai
+privacy_url: https://exa.ai/privacy
+terms_url: https://exa.ai/terms
 connections:
   api:
     base_url: https://api.exa.ai
@@ -32,26 +31,13 @@ connections:
       login:
       - email_code: true
       - sso: google
-
 product:
   name: Exa
   website: https://exa.ai
   developer: Exa AI, Inc.
-
 tools:
   search:
     wraps_as: search
-
-test:
-  check_session:
-    skip: true
-  search:
-    params:
-      query: agentOS personal AI
-      limit: 3
-  read_webpage:
-    params:
-      url: https://exa.ai
 ---
 
 # Exa

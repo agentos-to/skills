@@ -13,16 +13,6 @@ product:
   name: Hacker News
   website: https://news.ycombinator.com
   developer: Y Combinator
-
-test:
-  list_posts:
-    params:
-      feed: front
-      limit: 3
-  get_post:
-    params:
-      id: '1'
-      url: null
 ---
 
 # Hacker News

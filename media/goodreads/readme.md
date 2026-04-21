@@ -1,22 +1,21 @@
 ---
 id: goodreads
 capabilities:
-  - http
+- http
 name: Goodreads
-description: "Read your Goodreads profile, books, reviews, friends, and activity"
-color: "#372213"
-website: "https://goodreads.com"
-
+description: Read your Goodreads profile, books, reviews, friends, and activity
+color: '#372213'
+website: https://goodreads.com
 product:
   name: Goodreads
   website: https://goodreads.com
   developer: Amazon
-
 connections:
   graphql:
-    description: Public AppSync GraphQL — API key auto-discovered from JS bundles
+    description: "Public AppSync GraphQL \u2014 API key auto-discovered from JS bundles"
   web:
-    description: Goodreads user cookies for viewer-scoped data (friends, shelves, books, reviews)
+    description: Goodreads user cookies for viewer-scoped data (friends, shelves,
+      books, reviews)
     base_url: https://www.goodreads.com
     auth:
       type: cookies
@@ -26,70 +25,6 @@ connections:
     optional: true
     label: Goodreads Session
     help_url: https://www.goodreads.com/user/sign_in
-
-test:
-  check_session:
-    skip: true
-  get_person:
-    account: '26631647'
-    params:
-      user_id: '26631647'
-  search_people:
-    skip: true
-  resolve_email:
-    skip: true
-  list_friends:
-    skip: true
-  list_books:
-    skip: true
-  get_book:
-    account: '26631647'
-    params:
-      book_id: '4934'
-  list_book_reviews:
-    account: '26631647'
-    params:
-      book_id: '4934'
-      limit: 5
-  list_similar_books:
-    account: '26631647'
-    params:
-      book_id: '4934'
-      limit: 5
-  list_series_books:
-    account: '26631647'
-    params:
-      book_id: '4934'
-      limit: 5
-  search_books:
-    account: '26631647'
-    params:
-      query: Brothers Karamazov
-      limit: 3
-  get_author:
-    account: '26631647'
-    params:
-      author_id: '3137322'
-      limit: 3
-  list_author_books:
-    account: '26631647'
-    params:
-      author_id: '3137322'
-      limit: 3
-  list_reviews:
-    skip: true
-  list_shelves:
-    skip: true
-  list_shelf_books:
-    skip: true
-  list_groups:
-    skip: true
-  list_following:
-    skip: true
-  list_followers:
-    skip: true
-  list_quotes:
-    skip: true
 ---
 
 # Goodreads Skill

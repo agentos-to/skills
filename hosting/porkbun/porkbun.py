@@ -1,6 +1,6 @@
 """Porkbun — domain and DNS management via the Porkbun API."""
 
-from agentos import http, connection, returns
+from agentos import connection, http, returns, test
 
 API_BASE = "https://api.porkbun.com/api/json/v3"
 
@@ -46,6 +46,7 @@ def _map_dns_record(r: dict, domain: str = "") -> dict:
     }
 
 
+@test
 @returns("domain[]")
 @connection("api")
 async def list_domains(**params) -> list[dict]:
@@ -57,6 +58,7 @@ async def list_domains(**params) -> list[dict]:
     return [_map_domain(d) for d in (resp["json"] or {}).get("domains", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("dns_record[]")
 @connection("api")
 async def list_dns_records(*, domain: str, **params) -> list[dict]:
@@ -72,6 +74,7 @@ async def list_dns_records(*, domain: str, **params) -> list[dict]:
     return [_map_dns_record(r, domain) for r in (resp["json"] or {}).get("records", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 async def create_dns_record(*, domain: str, type: str, content: str, name: str = "", ttl: int = 600, prio: int = None, **params) -> dict:
@@ -97,6 +100,7 @@ async def create_dns_record(*, domain: str, type: str, content: str, name: str =
     return resp["json"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 async def update_dns_record(*, domain: str, id: str, type: str, content: str, name: str = "", ttl: int = 600, prio: int = None, **params) -> dict:
@@ -123,6 +127,7 @@ async def update_dns_record(*, domain: str, id: str, type: str, content: str, na
     return resp["json"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 async def delete_dns_record(*, domain: str, id: str, **params) -> dict:

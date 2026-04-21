@@ -1,42 +1,23 @@
 ---
 id: ollama
 capabilities:
-  - http
-  - shell
+- http
+- shell
 name: Ollama
 description: Local AI models running on your machine via Ollama
-color: "#0F172A"
-website: "https://ollama.com"
-privacy_url: "https://ollama.com/privacy"
-
+color: '#0F172A'
+website: https://ollama.com
+privacy_url: https://ollama.com/privacy
 connections:
   api:
-    description: Ollama REST API — fast inference path, requires server to be running
+    description: "Ollama REST API \u2014 fast inference path, requires server to be\
+      \ running"
     base_url: http://localhost:11434
   cli:
-    description: Ollama CLI — can start the server, pull/delete models, management ops
+    description: "Ollama CLI \u2014 can start the server, pull/delete models, management\
+      \ ops"
     vars:
       binary: /opt/homebrew/bin/ollama
-
-test:
-  op_status: {}
-  list_models_cli: {}
-  # API path + ps require the server to be running — skip unless local Ollama is up.
-  list_models:
-    skip: true
-  ps:
-    skip: true
-  op_show_model:
-    skip: true
-  # Inference / destructive ops — skip by default.
-  op_chat:
-    skip: true
-  op_generate:
-    skip: true
-  op_pull_model:
-    skip: true
-  op_delete_model:
-    skip: true
 ---
 
 # Ollama

@@ -7,7 +7,7 @@ All public functions use keyword-only args and accept **params for
 forward-compatibility with engine-injected context.
 """
 
-from agentos import oauth, sql, returns, provides, oauth_auth
+from agentos import oauth, oauth_auth, provides, returns, sql, test
 from agentos.macos import keychain, plist
 
 DB_PATH = "~/Library/Containers/com.mimestream.Mimestream/Data/Library/Application Support/Mimestream/Mimestream.sqlite"
@@ -84,6 +84,7 @@ def _map_conversation(row):
 # ==============================================================================
 
 
+@test(params={'limit': 5})
 @returns("email[]")
 async def list_emails(*, account=None, mailbox=None, is_unread=None, limit=1000, **params):
     """List emails, optionally filtered by mailbox, account, or flags."""
@@ -139,6 +140,7 @@ async def list_emails(*, account=None, mailbox=None, is_unread=None, limit=1000,
     return [_map_email(r) for r in rows]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("email")
 async def get_email(*, id, **params):
     """Get a specific email with full body content and headers."""
@@ -185,6 +187,7 @@ async def get_email(*, id, **params):
     return _map_email(rows[0]) if rows else None
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("email[]")
 async def search_emails(*, query, account=None, limit=1000, **params):
     """Search emails by subject, snippet, body text, or sender."""
@@ -238,6 +241,7 @@ async def search_emails(*, query, account=None, limit=1000, **params):
 # ==============================================================================
 
 
+@test(params={'limit': 5})
 @returns("conversation[]")
 async def list_conversations(*, account=None, limit=1000, **params):
     """List email threads with latest message info."""
@@ -263,6 +267,7 @@ async def list_conversations(*, account=None, limit=1000, **params):
     return [_map_conversation(r) for r in rows]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("conversation")
 async def get_conversation(*, id, **params):
     """Get all messages in an email thread."""
@@ -288,6 +293,7 @@ async def get_conversation(*, id, **params):
 # ==============================================================================
 
 
+@test
 @returns({"id": "integer", "name": "string", "role": "string", "unreadCount": "integer", "totalCount": "integer", "accountEmail": "string"})
 async def list_mailboxes(*, account=None, **params):
     """List mailboxes/labels for an account."""
@@ -320,6 +326,7 @@ async def list_mailboxes(*, account=None, **params):
     """, db=DB_PATH, params={"account": account})
 
 
+@test
 @returns({"id": "integer", "name": "string", "email": "string", "color": "string"})
 async def list_accounts(**params):
     """List configured email accounts with their primary email address."""
@@ -340,6 +347,7 @@ async def list_accounts(**params):
 # ==============================================================================
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"access_token": "string", "refresh_token": "string", "client_id": "string", "token_url": "string", "expires_in": "integer", "scope": "string"})
 @provides(oauth_auth, service="google", account_param="account")
 async def credential_get(*, account, **params):

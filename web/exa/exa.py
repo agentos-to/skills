@@ -35,7 +35,7 @@ The dashboard UI masks it, but the API returns it in full.
 Key format: UUID (e.g. "5bcbb3da-e415-44f1-8e57-10e92177f378").
 """
 
-from agentos import http, connection, provides, returns, timeout, web_read, web_search, claims
+from agentos import claims, connection, http, provides, returns, test, timeout, web_read, web_search
 
 AUTH_BASE = "https://auth.exa.ai"
 API_BASE = "https://api.exa.ai"
@@ -102,6 +102,7 @@ def _extract_set_cookies(resp: dict) -> dict:
 _EXA = {"shape": "product", "url": "https://exa.ai", "name": "Exa"}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("dashboard")
@@ -498,6 +499,7 @@ def _map_result(r: dict) -> dict:
     }
 
 
+@test(params={'query': 'agentOS personal AI', 'limit': 3})
 @returns("result[]")
 @provides(web_search)
 @connection("api")
@@ -530,6 +532,7 @@ async def search(*, query: str, limit: int = 10, category: str = None, include_t
     return [_map_result(r) for r in (resp["json"] or {}).get("results", [])]
 
 
+@test(params={'url': 'https://exa.ai'})
 @returns("webpage")
 @provides(web_read)
 @connection("api")

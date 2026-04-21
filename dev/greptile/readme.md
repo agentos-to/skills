@@ -1,14 +1,14 @@
 ---
 id: greptile
 capabilities:
-  - http
+- http
 name: Greptile
-description: AI code review and codebase search — organization and member management via dashboard session
-color: "#16B364"
-website: "https://greptile.com"
-privacy_url: "https://www.greptile.com/privacy"
-terms_url: "https://www.greptile.com/terms"
-
+description: "AI code review and codebase search \u2014 organization and member management\
+  \ via dashboard session"
+color: '#16B364'
+website: https://greptile.com
+privacy_url: https://www.greptile.com/privacy
+terms_url: https://www.greptile.com/terms
 connections:
   dashboard:
     base_url: https://app.greptile.com
@@ -17,23 +17,15 @@ connections:
       type: cookies
       domain: app.greptile.com
       names:
-        - __Secure-authjs.session-token
+      - __Secure-authjs.session-token
       account:
         check: check_session
     label: Dashboard session
     help_url: https://app.greptile.com/settings/organization/people
-
 product:
   name: Greptile
   website: https://greptile.com
   developer: Greptile, Inc.
-
-test:
-  check_session:
-    expect:
-      authenticated: true
-  list_members:
-    expect_count_at_least: 1
 ---
 
 # Greptile

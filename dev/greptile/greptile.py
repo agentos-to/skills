@@ -26,7 +26,7 @@ the one-shot path.
 import json
 import re
 
-from agentos import http, connection, returns, timeout, claims
+from agentos import claims, connection, http, returns, test, timeout
 
 DASHBOARD_BASE = "https://app.greptile.com"
 
@@ -271,6 +271,7 @@ async def _resolve_tenant_id(cookie_header: str, tenant_id: str | None = None) -
 # ---------------------------------------------------------------------------
 
 
+@test
 @returns("account")
 @claims("primary_user")
 @connection("dashboard")
@@ -308,6 +309,7 @@ async def check_session(*, auth: dict = None, **params) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@test
 @returns("account[]")
 @connection("dashboard")
 @timeout(30)

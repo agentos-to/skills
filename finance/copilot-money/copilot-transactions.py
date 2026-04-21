@@ -13,7 +13,7 @@ import os
 import sys
 import argparse
 
-from agentos import sql, returns, claims
+from agentos import claims, returns, sql, test
 
 WIDGET_DIR = os.path.expanduser(
     "~/Library/Group Containers/group.com.copilot.production/widget-data"
@@ -53,6 +53,7 @@ def _load_account_institutions():
     return out
 
 
+@test(params={'limit': 5})
 @returns("transaction[]")
 @claims("primary_user")
 async def fetch_transactions(account_id=None, limit=100, query=None, **_kwargs):

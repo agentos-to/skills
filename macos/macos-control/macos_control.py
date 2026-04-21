@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agentos import shell, provides, returns, timeout, file_info, file_list, file_read
+from agentos import file_info, file_list, file_read, provides, returns, shell, test, timeout
 
 
 APP_SYSTEM_PROFILER_SWIFT = r"""
@@ -208,6 +208,7 @@ async def _load_displays():
     return normalized
 
 
+@test
 @returns({"displays": "{'type': 'array', 'description': 'Connected displays'}", "count": "integer"})
 @timeout(15)
 async def list_displays(**params):
@@ -254,6 +255,7 @@ async def list_apps(*, limit=None, **params):
     }
 
 
+@test(params={'limit': 5})
 @returns({"processes": "{'type': 'array', 'description': 'Running processes'}", "count": "integer"})
 @timeout(15)
 async def list_processes(*, limit=None, **params):
@@ -714,6 +716,7 @@ SORT_KEYS = {
 }
 
 
+@test(params={'path': '/etc'})
 @returns({"path": "string", "entries": "{'type': 'array', 'description': 'File and folder entries with shape-compatible fields'}", "count": "integer"})
 @provides(file_list)
 @timeout(10)

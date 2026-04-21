@@ -17,7 +17,7 @@ import asyncio
 import time
 from pathlib import Path
 
-from agentos import http, shell, connection, provides, returns, timeout
+from agentos import connection, http, provides, returns, shell, test, timeout
 from agentos.tools import llm
 
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -112,6 +112,7 @@ async def _ensure_api_running(connection: dict | None, cli_connection: dict | No
 
 # ── Status ────────────────────────────────────────────────────────────────────
 
+@test
 @returns({"running": "{'type': 'boolean'}", "version": "{'type': 'string'}", "started": "{'type': 'boolean'}", "message": "{'type': 'string'}"})
 @connection("cli")
 async def op_status(connection: dict | None = None, **kwargs) -> dict:
@@ -168,6 +169,7 @@ def _normalize_tool_calls(raw: list) -> list:
     return out
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @provides(llm)
 @returns({"content": "{'type': 'string', 'description': 'Text response (null if tool calls only)'}", "thinking": "{'type': 'string', 'description': 'Reasoning trace (only for thinking models)'}", "tool_calls": "{'type': 'array', 'description': 'Tool calls the model wants to make'}", "stop_reason": "{'type': 'string', 'enum': ['end_turn', 'tool_use', 'max_tokens']}", "usage": "{'type': 'object', 'description': 'Token counts: input_tokens, output_tokens'}"})
 @connection(["api", "cli"])
@@ -287,6 +289,7 @@ async def _chat_via_cli(
 
 # ── Generate ──────────────────────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"response": "{'type': 'string'}", "usage": "{'type': 'object', 'description': 'input_tokens, output_tokens'}"})
 @connection("api")
 @timeout(300)
@@ -379,6 +382,7 @@ def _parse_list_text(text: str) -> list:
 
 # ── Pull model ────────────────────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"status": "{'type': 'string'}", "model": "{'type': 'string'}", "message": "{'type': 'string'}"})
 @connection(["cli", "api"])
 @timeout(600)
@@ -421,6 +425,7 @@ async def _pull_via_api(model: str, connection: dict | None) -> dict:
 
 # ── Delete model ──────────────────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"status": "{'type': 'string'}", "model": "{'type': 'string'}", "message": "{'type': 'string'}"})
 @connection(["api", "cli"])
 async def op_delete_model(model: str, connection: dict | None = None, **kwargs) -> dict:
@@ -453,6 +458,7 @@ async def _delete_via_cli(model: str, connection: dict | None) -> dict:
 
 # ── Show model ────────────────────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"name": "{'type': 'string'}", "format": "{'type': 'string'}", "family": "{'type': 'string'}", "parameterSize": "{'type': 'string'}", "quantizationLevel": "{'type': 'string'}", "contextLength": "{'type': 'integer'}", "template": "{'type': 'string'}", "systemPrompt": "{'type': 'string'}"})
 @connection("api")
 @timeout(15)
@@ -493,6 +499,7 @@ async def op_show_model(model: str, connection: dict | None = None, **kwargs) ->
 _OLLAMA = {"shape": "product", "url": "https://ollama.com", "name": "Ollama"}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("model[]")
 @connection("api")
 @timeout(15)
@@ -516,6 +523,7 @@ async def list_models(connection: dict | None = None, **params) -> list[dict]:
     ]
 
 
+@test
 @returns("model[]")
 @connection("cli")
 @timeout(15)
@@ -539,6 +547,7 @@ async def list_models_cli(connection: dict | None = None, **params) -> list[dict
     ]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("loaded_model[]")
 @connection("api")
 @timeout(15)

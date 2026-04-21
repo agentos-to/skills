@@ -1,15 +1,16 @@
 ---
 id: uber
 capabilities:
-  - http
+- http
 name: Uber
-description: "Ride history, trip details, Eats order history, and account info from Uber"
-color: "#000000"
-website: "https://uber.com"
-
+description: Ride history, trip details, Eats order history, and account info from
+  Uber
+color: '#000000'
+website: https://uber.com
 connections:
   web:
-    description: Uber rider account — requires cookies from a logged-in browser session
+    description: "Uber rider account \u2014 requires cookies from a logged-in browser\
+      \ session"
     base_url: https://riders.uber.com
     domain: uber.com
     auth:
@@ -20,7 +21,8 @@ connections:
     label: Uber Rider
     help_url: https://riders.uber.com
   eats:
-    description: Uber Eats — requires cookies from a logged-in ubereats.com browser session
+    description: "Uber Eats \u2014 requires cookies from a logged-in ubereats.com\
+      \ browser session"
     base_url: https://www.ubereats.com
     domain: ubereats.com
     auth:
@@ -30,56 +32,10 @@ connections:
         check: check_eats_session
     label: Uber Eats
     help_url: https://www.ubereats.com
-
 product:
   name: Uber
   website: https://uber.com
   developer: Uber Technologies
-
-test:
-  # Cookie-auth ops — skip by default; wire per-session when cookies are present.
-  check_session:
-    skip: true
-  check_eats_session:
-    skip: true
-  whoami:
-    skip: true
-  get_eats_profile:
-    skip: true
-  list_trips:
-    skip: true
-  get_trip:
-    skip: true
-  list_deliveries:
-    skip: true
-  get_delivery:
-    skip: true
-  search_stores:
-    skip: true
-  get_store:
-    skip: true
-  get_item_customizations:
-    skip: true
-  search_products:
-    skip: true
-  search_address:
-    skip: true
-  list_addresses:
-    skip: true
-  get_messages:
-    skip: true
-  list_nearby_stores:
-    skip: true
-  add_to_cart:
-    skip: true
-  get_cart:
-    skip: true
-  clear_cart:
-    skip: true
-  checkout:
-    skip: true
-  track_delivery:
-    skip: true
 ---
 
 # Uber

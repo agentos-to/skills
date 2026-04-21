@@ -8,7 +8,7 @@ directly (no subprocess, no temp files, no jq).
 import glob
 import sys
 import json
-from agentos import http, provides, returns, web_read
+from agentos import http, provides, returns, test, web_read
 
 # Add yt-dlp's own site-packages to path (stable symlink, version-agnostic)
 _ytdlp_paths = glob.glob("/opt/homebrew/opt/yt-dlp/libexec/lib/python*/site-packages")
@@ -116,6 +116,7 @@ def _ydl(extra: dict | None = None) -> yt_dlp.YoutubeDL:
 # Operations
 # ─────────────────────────────────────────────────────────────────────────────
 
+@test(params={'query': 'claude anthropic', 'limit': 3})
 @returns("video[]")
 async def search_videos(query: str, limit: int = 50, **params) -> list[dict]:
     """Search YouTube videos by query (returns results sorted by relevance)
@@ -129,6 +130,7 @@ async def search_videos(query: str, limit: int = 50, **params) -> list[dict]:
     return [_map_flat_entry(e) for e in (info.get("entries") or [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("video[]")
 async def search_recent_video(query: str, limit: int = 50, **params) -> list[dict]:
     """Search YouTube videos by query sorted by upload date (newest first)
@@ -142,6 +144,7 @@ async def search_recent_video(query: str, limit: int = 50, **params) -> list[dic
     return [_map_flat_entry(e) for e in (info.get("entries") or [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("video[]")
 async def list_videos(url: str, limit: int = 50, **params) -> list[dict]:
     """List videos from a YouTube channel or playlist
@@ -155,6 +158,7 @@ async def list_videos(url: str, limit: int = 50, **params) -> list[dict]:
     return [_map_flat_entry(e) for e in (info.get("entries") or [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("video")
 async def get_video(url: str, **params) -> dict:
     """Get video metadata (title, creator, thumbnail, duration)
@@ -167,6 +171,7 @@ async def get_video(url: str, **params) -> dict:
     return _map_full_info(info)
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("video")
 @provides(web_read, urls=["youtube.com/*", "youtu.be/*", "music.youtube.com/*"])
 async def transcript_video(url: str, lang: str = "en", format: str = "text", **params) -> dict:
@@ -233,6 +238,7 @@ async def transcript_video(url: str, lang: str = "en", format: str = "text", **p
     return vid
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("channel")
 async def get_channel(url: str, **params) -> dict:
     """Get YouTube channel metadata (avatar, description, subscriber count)
@@ -265,6 +271,7 @@ async def get_channel(url: str, **params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("channel")
 async def get_avatar_channel(url: str, **params) -> dict:
     """Quick fetch of channel avatar via og:image — ~1s."""
@@ -278,6 +285,7 @@ async def get_avatar_channel(url: str, **params) -> dict:
     return {"url": url, "image": avatar}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("post[]")
 async def list_posts(url: str, limit: int = 50, **params) -> list[dict]:
     """List comments on a video as post entities."""

@@ -1,24 +1,23 @@
 ---
 id: claude
 capabilities:
-  - http
-  - secrets
-  - shell
+- http
+- secrets
+- shell
 name: Claude
-description: Claude — Anthropic's AI model family. Inference via API or local CLI, plus claude.ai chat history.
-color: "#D97757"
-website: "https://claude.ai"
-privacy_url: "https://www.anthropic.com/privacy"
-terms_url: "https://www.anthropic.com/terms-of-service"
-
+description: "Claude \u2014 Anthropic's AI model family. Inference via API or local\
+  \ CLI, plus claude.ai chat history."
+color: '#D97757'
+website: https://claude.ai
+privacy_url: https://www.anthropic.com/privacy
+terms_url: https://www.anthropic.com/terms-of-service
 product:
   name: Claude
   website: https://claude.ai
   developer: Anthropic
-
 connections:
   api:
-    description: Claude API — inference via the Messages API
+    description: "Claude API \u2014 inference via the Messages API"
     base_url: https://api.anthropic.com/v1
     auth:
       type: api_key
@@ -26,13 +25,11 @@ connections:
         x-api-key: .auth.key
     label: API Key
     help_url: https://console.anthropic.com/settings/keys
-
   code:
-    description: Claude Code — local CLI, uses the user's existing auth (no API key)
-    # No credentials: the `claude` binary manages its own auth state.
-
+    description: "Claude Code \u2014 local CLI, uses the user's existing auth (no\
+      \ API key)"
   web:
-    description: claude.ai — web chat history via session cookies
+    description: "claude.ai \u2014 web chat history via session cookies"
     auth:
       type: cookies
       domain: .claude.ai
@@ -44,7 +41,8 @@ connections:
         account_prompt: What email do you use for claude.ai?
         phases:
         - name: request_login
-          description: Submit email on the Claude login page to trigger a magic link email
+          description: Submit email on the Claude login page to trigger a magic link
+            email
           steps:
           - action: goto
             url: https://claude.ai/login
@@ -53,9 +51,11 @@ connections:
             value: ${ACCOUNT}
           - action: click
             selector: button[type=submit]
-          returns_to_agent: 'Magic link requested. Check the user''s email for a message from Anthropic
+          returns_to_agent: 'Magic link requested. Check the user''s email for a message
+            from Anthropic
 
-            containing a claude.ai/magic-link URL. Search mail or the graph for that message,
+            containing a claude.ai/magic-link URL. Search mail or the graph for that
+            message,
 
             or ask the user to paste the link.
 
@@ -71,13 +71,10 @@ connections:
             url_contains: /new
           returns_to_agent: 'Login complete. The sessionKey cookie is now in the browser.
 
-            Cookie provider matchmaking will extract it automatically on the next API call.
+            Cookie provider matchmaking will extract it automatically on the next
+            API call.
 
             '
-
-test:
-  check_session:
-    skip: true
 ---
 
 # Claude

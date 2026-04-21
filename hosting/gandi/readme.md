@@ -1,13 +1,12 @@
 ---
 id: gandi
 capabilities:
-  - http
+- http
 name: Gandi
 description: Domain and DNS management via the Gandi API
-color: "#E74B3C"
-website: "https://www.gandi.net"
-privacy_url: "https://www.gandi.net/en/contracts/privacy-policy"
-
+color: '#E74B3C'
+website: https://www.gandi.net
+privacy_url: https://www.gandi.net/en/contracts/privacy-policy
 connections:
   api:
     base_url: https://api.gandi.net/v5
@@ -17,21 +16,6 @@ connections:
         Authorization: '"Bearer " + .auth.key'
     label: Personal Access Token
     help_url: https://admin.gandi.net/organizations/account/pat
-
-test:
-  list_domains: {}
-  # Domain-scoped ops need a live domain arg — skip in the generic sweep.
-  get_domain:
-    skip: true
-  list_dns_records:
-    skip: true
-  get_dns_record:
-    skip: true
-  # Writes — skip.
-  upsert_dns_record:
-    skip: true
-  delete_dns_record:
-    skip: true
 ---
 
 # Gandi

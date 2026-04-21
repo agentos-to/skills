@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 
-from agentos import http, connection, provides, returns
+from agentos import connection, http, provides, returns, test
 from agentos.tools import llm
 
 API_BASE = "https://openrouter.ai/api/v1"
@@ -32,6 +32,7 @@ def _ts_to_iso(ts) -> str | None:
         return None
 
 
+@test
 @returns("model[]")
 @connection("api")
 async def list_models(**params) -> list[dict]:
@@ -80,6 +81,7 @@ def _to_openai_msg(msg: dict) -> dict:
     return {"role": msg.get("role"), "content": msg.get("content")}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @provides(llm, models=["opus", "sonnet", "haiku", "gpt-4o", "gpt-4o-mini", "llama3.3", "claude-opus-4-6", "claude-sonnet-4-5"])
 @returns({"content": "{'type': 'string', 'description': 'Text response from the model (null if tool calls only)'}", "tool_calls": "{'type': 'array', 'description': 'Tool calls the model wants to make'}", "stop_reason": "{'type': 'string', 'enum': ['end_turn', 'tool_use', 'max_tokens']}", "usage": "{'type': 'object', 'description': 'Token usage (input_tokens, output_tokens)'}"})
 @connection("api")

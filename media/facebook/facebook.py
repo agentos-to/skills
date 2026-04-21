@@ -4,9 +4,10 @@ import re
 import shutil
 
 from lxml import html as lhtml
-from agentos import http, shell, provides, returns, timeout, web_read
+from agentos import http, provides, returns, shell, test, timeout, web_read
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("community")
 @provides(web_read, urls=["facebook.com/groups/*", "www.facebook.com/groups/*"])
 @timeout(35)

@@ -1,18 +1,17 @@
 ---
 id: problem-solving
 capabilities:
-  - llm
-  - shell
+- llm
+- shell
 name: Problem Solving
-description: "Interview the user to a clear problem definition, then run adversarial solutioning"
-color: "#8B5CF6"
-website: "https://agentos.to"
-
+description: Interview the user to a clear problem definition, then run adversarial
+  solutioning
+color: '#8B5CF6'
+website: https://agentos.to
 product:
   name: agentOS
   website: https://agentos.to
   developer: agentOS
-
 tools:
   evaluate_problem:
     async: true
@@ -22,12 +21,6 @@ tools:
     async: true
   give_feedback:
     async: true
-
-test:
-  evaluate_problem: { skip: true }
-  solution: { skip: true }
-  closeout: { skip: true }
-  give_feedback: { skip: true }
 ---
 
 # Problem Solving

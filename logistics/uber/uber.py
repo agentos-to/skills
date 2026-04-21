@@ -3,7 +3,7 @@
 import json as _json
 import re as _re
 import uuid as uuid_mod
-from agentos import get_cookies, http, connection, provides, returns, timeout, geocoding, require_cookies, claims
+from agentos import claims, connection, geocoding, get_cookies, http, provides, require_cookies, returns, test, timeout
 
 # ---------------------------------------------------------------------------
 # Rides API — GraphQL at riders.uber.com
@@ -277,6 +277,7 @@ _UBER = {"shape": "product", "url": "https://uber.com", "name": "Uber"}
 _UBER_EATS = {"shape": "product", "url": "https://ubereats.com", "name": "Uber Eats"}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("web")
@@ -303,6 +304,7 @@ async def check_session(**params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"id": "string", "name": "string", "email": "string", "phone": "string", "rating": "string", "hasUberOne": "boolean", "paymentMethods": "array", "profiles": "array", "country": "string"})
 @connection("web")
 async def whoami(**params) -> dict:
@@ -345,6 +347,7 @@ async def whoami(**params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("trip[]")
 @connection("web")
 async def list_trips(
@@ -399,6 +402,7 @@ async def list_trips(
     return trips
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("trip")
 @connection("web")
 async def get_trip(trip_id: str, **params) -> dict:
@@ -556,6 +560,7 @@ async def _eats_post(cookie_header: str, endpoint: str, body: dict | None = None
 # See requirements.md for full API shape documentation.
 # ---------------------------------------------------------------------------
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("eats")
@@ -583,6 +588,7 @@ async def check_eats_session(**params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"id": "string", "name": "string", "email": "string", "phone": "string", "subscription": "object", "savedAddresses": "array", "paymentMethods": "array"})
 @connection("eats")
 async def get_eats_profile(**params) -> dict:
@@ -644,6 +650,7 @@ async def get_eats_profile(**params) -> dict:
     return result
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order[]")
 @connection("eats")
 async def list_deliveries(cursor: str = "", **params) -> list:
@@ -749,6 +756,7 @@ async def list_deliveries(cursor: str = "", **params) -> list:
     return orders
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order")
 @connection("eats")
 async def get_delivery(order_uuid: str, **params) -> dict:
@@ -901,6 +909,7 @@ async def get_delivery(order_uuid: str, **params) -> dict:
     return result
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("place")
 @connection("eats")
 async def get_store(store_uuid: str, **params) -> dict:
@@ -1095,6 +1104,7 @@ async def get_store(store_uuid: str, **params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("product")
 @connection("eats")
 @timeout(15)
@@ -1210,6 +1220,7 @@ async def get_item_customizations(store_uuid: str, item_uuid: str, section_uuid:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("product[]")
 @connection("eats")
 @timeout(15)
@@ -1333,6 +1344,7 @@ async def search_products(store_uuid: str, query: str, **params) -> list:
     return products
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("place[]")
 @provides(geocoding)
 @connection("eats")
@@ -1397,6 +1409,7 @@ async def search_address(query: str, resolve: bool = True, **params) -> list:
     return places
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("place[]")
 @connection("eats")
 @timeout(15)
@@ -1481,6 +1494,7 @@ async def list_addresses(**params) -> list:
     return places
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order")
 @connection("eats")
 @timeout(15)
@@ -1512,6 +1526,7 @@ async def get_messages(order_uuid: str, **params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("place[]")
 @connection("eats")
 @timeout(15)
@@ -1563,6 +1578,7 @@ async def search_stores(query: str = "", **params) -> list:
     return stores
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("place[]")
 @connection("eats")
 async def list_nearby_stores(**params) -> list:
@@ -1866,6 +1882,7 @@ async def _build_delivery_address_from_record(cookie_header: str, delivery_addre
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order")
 @connection("eats")
 @timeout(60)
@@ -1982,6 +1999,7 @@ async def add_to_cart(store_uuid: str, items: list, delivery_address_uuid: str,
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order[]")
 @connection("eats")
 async def get_cart(**params) -> list:
@@ -2035,6 +2053,7 @@ async def get_cart(**params) -> list:
     return orders
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"status": "string", "draftOrderUuid": "string"})
 @connection("eats")
 async def clear_cart(draft_order_uuid: str, **params) -> dict:
@@ -2044,6 +2063,7 @@ async def clear_cart(draft_order_uuid: str, **params) -> dict:
     return {"status": "cleared", "draftOrderUuid": draft_order_uuid}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order")
 @connection("eats")
 @timeout(60)
@@ -2236,6 +2256,7 @@ async def checkout(draft_order_uuid: str, **params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("order")
 @connection("eats")
 async def track_delivery(order_uuid: str = "", **params) -> dict:

@@ -1,5 +1,5 @@
 import re
-from agentos import http, connection, provides, returns, web_read
+from agentos import connection, http, provides, returns, test, web_read
 
 API_BASE = "https://api.todoist.com/api/v1"
 
@@ -48,6 +48,7 @@ def _map_tag(t: dict) -> dict:
     }
 
 
+@test
 @returns("task[]")
 @connection("api")
 async def list_tasks(*, query: str = "today | overdue | #Inbox", **params) -> list:
@@ -62,6 +63,7 @@ async def list_tasks(*, query: str = "today | overdue | #Inbox", **params) -> li
     return [_map_task(t) for t in (resp["json"] or {}).get("results", [])]
 
 
+@test
 @returns("task[]")
 @connection("api")
 async def list_all_tasks(*, project_id: str = None, section_id: str = None,
@@ -84,6 +86,7 @@ async def list_all_tasks(*, project_id: str = None, section_id: str = None,
     return [_map_task(t) for t in (resp["json"] or {}).get("results", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task[]")
 @connection("api")
 async def filter_task(*, filter: str, **params) -> list:
@@ -98,6 +101,7 @@ async def filter_task(*, filter: str, **params) -> list:
     return [_map_task(t) for t in (resp["json"] or {}).get("results", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 @provides(web_read, urls=["app.todoist.com/*/task/*", "todoist.com/*/task/*"])
 @connection("api")
@@ -117,6 +121,7 @@ async def get_task(*, id: str = None, url: str = None, **params) -> dict:
     return _map_task(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 @connection("api")
 async def create_task(*, name: str, description: str = None, due: str = None,
@@ -145,6 +150,7 @@ async def create_task(*, name: str, description: str = None, due: str = None,
     return _map_task(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 @connection("api")
 async def update_task(*, id: str, name: str = None, description: str = None,
@@ -173,6 +179,7 @@ async def update_task(*, id: str, name: str = None, description: str = None,
     return _map_task(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 async def complete_task(*, id: str, **params) -> None:
@@ -185,6 +192,7 @@ async def complete_task(*, id: str, **params) -> None:
     await http.post(f"{API_BASE}/tasks/{id}/close", **http.headers(accept="json", extra=headers))
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 async def reopen_task(*, id: str, **params) -> None:
@@ -197,6 +205,7 @@ async def reopen_task(*, id: str, **params) -> None:
     await http.post(f"{API_BASE}/tasks/{id}/reopen", **http.headers(accept="json", extra=headers))
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 @connection("api")
 async def delete_task(*, id: str, **params) -> None:
@@ -209,6 +218,7 @@ async def delete_task(*, id: str, **params) -> None:
     await http.delete(f"{API_BASE}/tasks/{id}", **http.headers(accept="json", extra=headers))
 
 
+@test
 @returns("project[]")
 @connection("api")
 async def list_projects(**params) -> list:
@@ -218,6 +228,7 @@ async def list_projects(**params) -> list:
     return [_map_project(p) for p in (resp["json"] or {}).get("results", [])]
 
 
+@test
 @returns("tag[]")
 @connection("api")
 async def list_tags(**params) -> list:
@@ -227,6 +238,7 @@ async def list_tags(**params) -> list:
     return [_map_tag(t) for t in (resp["json"] or {}).get("results", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 @connection("api")
 async def move_task(*, id: str, project_id: str = None, section_id: str = None,

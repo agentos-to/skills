@@ -1,16 +1,11 @@
 ---
 id: spacex
 capabilities:
-  - http
+- http
 name: SpaceX
-description: SpaceX launch data — upcoming, past, and individual launch details
-color: "#005288"
+description: "SpaceX launch data \u2014 upcoming, past, and individual launch details"
+color: '#005288'
 website: https://www.spacex.com
-
-test:
-  list_upcoming: {}
-  list_past: { params: { limit: 5 } }
-  get_launch: { params: { id: "5eb87d46ffd86e000604b388" } }
 ---
 
 # SpaceX

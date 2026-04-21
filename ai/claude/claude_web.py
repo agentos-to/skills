@@ -17,7 +17,7 @@ Required headers (bypass Cloudflare + match expected browser client):
 import base64
 import re
 
-from agentos import get_cookies, http, connection, provides, returns, timeout, web_read, parse_cookie, claims
+from agentos import claims, connection, get_cookies, http, parse_cookie, provides, returns, test, timeout, web_read
 
 BASE_URL = "https://claude.ai"
 
@@ -306,6 +306,7 @@ def _pick_identity(orgs: list) -> tuple[str, str] | None:
     return None
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("web")

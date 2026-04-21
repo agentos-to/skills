@@ -1,13 +1,12 @@
 ---
 id: porkbun
 capabilities:
-  - http
+- http
 name: Porkbun
 description: Domain and DNS management via the Porkbun API
-color: "#D62F53"
-website: "https://porkbun.com"
-privacy_url: "https://porkbun.com/products/privacy"
-
+color: '#D62F53'
+website: https://porkbun.com
+privacy_url: https://porkbun.com/products/privacy
 connections:
   api:
     base_url: https://api.porkbun.com/api/json/v3
@@ -18,17 +17,6 @@ connections:
         secretapikey: .auth.key | split(":") | .[1]
     label: API key and secret
     help_url: https://porkbun.com/account/api
-
-test:
-  list_domains: {}
-  list_dns_records:
-    skip: true
-  create_dns_record:
-    skip: true
-  update_dns_record:
-    skip: true
-  delete_dns_record:
-    skip: true
 ---
 
 # Porkbun

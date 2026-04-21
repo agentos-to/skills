@@ -1,14 +1,13 @@
 ---
 id: openrouter
 capabilities:
-  - http
+- http
 name: OpenRouter
 description: Unified AI gateway for models across providers via one API
-color: "#111827"
-website: "https://openrouter.ai"
-privacy_url: "https://openrouter.ai/privacy"
-terms_url: "https://openrouter.ai/terms"
-
+color: '#111827'
+website: https://openrouter.ai
+privacy_url: https://openrouter.ai/privacy
+terms_url: https://openrouter.ai/terms
 connections:
   api:
     base_url: https://openrouter.ai/api/v1
@@ -18,11 +17,6 @@ connections:
         Authorization: '"Bearer " + .auth.key'
     label: API Key
     help_url: https://openrouter.ai/keys
-
-test:
-  list_models: {}
-  chat:
-    skip: true
 ---
 
 # OpenRouter

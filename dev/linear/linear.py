@@ -4,7 +4,7 @@
 """
 
 import re
-from agentos import http, provides, returns, web_read, claims
+from agentos import claims, http, provides, returns, test, web_read
 
 API_URL = "https://api.linear.app/graphql"
 
@@ -147,6 +147,7 @@ def _map_project(node):
 # Operations
 # ---------------------------------------------------------------------------
 
+@test(params={'limit': 5})
 @returns("task[]")
 async def list_tasks(*, limit: int = 50, team_id: str = None, state_id: str = None, **params) -> list:
     """List issues with optional filters."""
@@ -167,6 +168,7 @@ async def list_tasks(*, limit: int = 50, team_id: str = None, state_id: str = No
     return [_map_task(n) for n in data["issues"]["nodes"]]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 @provides(web_read, urls=["linear.app/*/issue/*"])
 async def get_task(*, id: str = None, url: str = None, **params) -> dict:
@@ -190,6 +192,7 @@ async def get_task(*, id: str = None, url: str = None, **params) -> dict:
     return _map_task(data["issue"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 async def create_task(*, team_id: str, name: str, description: str = None,
                 priority: int = None, project_id: str = None,
@@ -213,6 +216,7 @@ async def create_task(*, team_id: str, name: str, description: str = None,
     return _map_task(data["issueCreate"]["issue"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("task")
 async def update_task(*, id: str, name: str = None, description: str = None,
                 priority: int = None, state_id: str = None,
@@ -236,6 +240,7 @@ async def update_task(*, id: str, name: str = None, description: str = None,
     return _map_task(data["issueUpdate"]["issue"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 async def delete_task(*, id: str, **params) -> dict:
     """Delete an issue."""
@@ -248,6 +253,7 @@ async def delete_task(*, id: str, **params) -> dict:
     return data["issueDelete"]
 
 
+@test
 @returns("project[]")
 async def list_projects(**params) -> list:
     """List all projects."""
@@ -256,6 +262,7 @@ async def list_projects(**params) -> list:
     return [_map_project(n) for n in data["projects"]["nodes"]]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"organization.urlKey": "string", "organization.name": "string", "teams": "array", "viewer.id": "string", "viewer.name": "string", "viewer.email": "string"})
 async def setup(**params) -> dict:
     """Auto-configure account params. Returns organization, teams, and viewer."""
@@ -274,6 +281,7 @@ async def setup(**params) -> dict:
     }
 
 
+@test
 @returns("account")
 @claims("primary_user")
 async def whoami(**params) -> dict:
@@ -290,6 +298,7 @@ async def whoami(**params) -> dict:
     }
 
 
+@test
 @returns({"id": "string", "name": "string", "urlKey": "string"})
 async def get_organization(**params) -> dict:
     """Get organization info including workspace URL slug."""
@@ -298,6 +307,7 @@ async def get_organization(**params) -> dict:
     return data["organization"]
 
 
+@test
 @returns({"id": "string", "key": "string", "name": "string"})
 async def get_teams(**params) -> list:
     """List all teams."""
@@ -306,6 +316,7 @@ async def get_teams(**params) -> list:
     return data["teams"]["nodes"]
 
 
+@test
 @returns({"id": "string", "name": "string", "type": "string", "position": "number"})
 async def get_workflow_states(*, team_id: str, **params) -> list:
     """List workflow states for a team."""
@@ -320,6 +331,7 @@ async def get_workflow_states(*, team_id: str, **params) -> list:
     return data["workflowStates"]["nodes"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"id": "string", "number": "integer", "startsAt": "datetime", "endsAt": "datetime"})
 async def get_cycles(*, team_id: str, **params) -> list:
     """List cycles (sprints) for a team."""
@@ -334,6 +346,7 @@ async def get_cycles(*, team_id: str, **params) -> list:
     return data["team"]["cycles"]["nodes"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"blocks": "array", "blockedBy": "array", "related": "array"})
 async def get_relations(*, id: str, **params) -> dict:
     """Get an issue's relationships (blocking, blocked by, related).
@@ -366,6 +379,7 @@ async def get_relations(*, id: str, **params) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 async def add_blocker(*, id: str, blocker_id: str, **params) -> dict:
     """Add a blocking relationship (blocker_id blocks id)."""
@@ -388,6 +402,7 @@ async def add_blocker(*, id: str, blocker_id: str, **params) -> dict:
     return {"success": result["success"], "id": result["issueRelation"]["id"]}
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 async def remove_relation(*, relation_id: str, **params) -> dict:
     """Remove a relationship by its ID."""
@@ -400,6 +415,7 @@ async def remove_relation(*, relation_id: str, **params) -> dict:
     return data["issueRelationDelete"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"ok": "boolean"})
 async def add_related(*, id: str, related_id: str, **params) -> dict:
     """Link two issues as related."""

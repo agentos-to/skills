@@ -1,19 +1,14 @@
 ---
 id: facebook
 capabilities:
-  - http
-  - shell
+- http
+- shell
 name: Facebook
 description: Query public Facebook group information without login
-color: "#106BFF"
-website: "https://facebook.com"
-privacy_url: "https://www.facebook.com/privacy/policy"
-terms_url: "https://www.facebook.com/legal/terms"
-
-test:
-  # Facebook aggressively rate-limits / blocks scrapers — skip in the sweep.
-  get_community:
-    skip: true
+color: '#106BFF'
+website: https://facebook.com
+privacy_url: https://www.facebook.com/privacy/policy
+terms_url: https://www.facebook.com/legal/terms
 ---
 
 # Facebook

@@ -6,7 +6,7 @@ from the Mimestream OAuth provider (googleapis.com / contacts scope).
 
 import re
 
-from agentos import http, connection, returns, timeout
+from agentos import connection, http, returns, test, timeout
 
 BASE_URL = "https://people.googleapis.com/v1"
 
@@ -297,6 +297,7 @@ def _update_person_fields(body):
 # ==============================================================================
 
 
+@test(params={'limit': 5})
 @returns("person[]")
 @connection("api")
 async def list_contacts(*, limit=100, page_token=None, **params):
@@ -336,6 +337,7 @@ async def get_contact(*, id, **params):
     return _map_person(resp["json"])
 
 
+@test(params={'query': 'a', 'limit': 5})
 @returns("person[]")
 @connection("api")
 @timeout(15)

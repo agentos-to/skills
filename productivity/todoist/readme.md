@@ -1,14 +1,13 @@
 ---
 id: todoist
 capabilities:
-  - http
+- http
 name: Todoist
 description: Personal task management
-color: "#DE483A"
-website: "https://todoist.com"
-privacy_url: "https://doist.com/privacy"
-terms_url: "https://doist.com/terms-of-service"
-
+color: '#DE483A'
+website: https://todoist.com
+privacy_url: https://doist.com/privacy
+terms_url: https://doist.com/terms-of-service
 connections:
   api:
     base_url: https://api.todoist.com/api/v1
@@ -18,29 +17,6 @@ connections:
         Authorization: '"Bearer " + .auth.key'
     label: API Token
     help_url: https://todoist.com/help/articles/find-your-api-token-Jpzx9IIlB
-
-test:
-  list_tasks: {}
-  list_all_tasks: {}
-  list_projects: {}
-  list_tags: {}
-  # Writes — skip.
-  create_task:
-    skip: true
-  update_task:
-    skip: true
-  complete_task:
-    skip: true
-  reopen_task:
-    skip: true
-  delete_task:
-    skip: true
-  move_task:
-    skip: true
-  filter_task:
-    skip: true
-  get_task:
-    skip: true
 ---
 
 # Todoist

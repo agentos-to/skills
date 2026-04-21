@@ -10,7 +10,7 @@ import json
 import yaml
 from pathlib import Path
 
-from agentos import llm, returns, shell, timeout
+from agentos import llm, returns, shell, test, timeout
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +136,7 @@ verdict: pass if no critical violations and ≤2 major violations. Otherwise fai
     "violations": "string",
     "summary": "string",
 })
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @timeout(120)
 async def evaluate_commit(
     diff: str,

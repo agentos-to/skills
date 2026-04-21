@@ -1,19 +1,16 @@
 ---
 id: code-review
 capabilities:
-  - llm
-  - shell
+- llm
+- shell
 name: Code Review
-description: "Evaluate code changes against project principles, refactoring specs, and architectural direction"
-color: "#DC2626"
+description: Evaluate code changes against project principles, refactoring specs,
+  and architectural direction
+color: '#DC2626'
 website: https://agentos.to
-
 tools:
   evaluate_commit:
     async: true
-
-test:
-  evaluate_commit: { skip: true }
 ---
 
 # Code Review

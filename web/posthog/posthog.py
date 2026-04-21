@@ -1,6 +1,6 @@
 """PostHog — product analytics: persons, events, recordings, and HogQL queries."""
 
-from agentos import http, connection, returns
+from agentos import connection, http, returns, test
 
 POSTHOG_BASE = "https://us.posthog.com"
 
@@ -41,6 +41,7 @@ def _map_event(e: dict) -> dict:
     }
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @connection("api")
 async def list_persons(*, project_id: str, search: str = None, limit: int = None, offset: int = None, **params) -> list[dict]:
@@ -62,6 +63,7 @@ async def list_persons(*, project_id: str, search: str = None, limit: int = None
     return [_map_person(p) for p in (resp["json"] or {}).get("results", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person")
 @connection("api")
 async def get_person(*, project_id: str, id: str, **params) -> dict:
@@ -76,6 +78,7 @@ async def get_person(*, project_id: str, id: str, **params) -> dict:
     return _map_person(resp["json"])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("person[]")
 @connection("api")
 async def search_persons(*, project_id: str, query: str, limit: int = None, **params) -> list[dict]:
@@ -93,6 +96,7 @@ async def search_persons(*, project_id: str, query: str, limit: int = None, **pa
     return [_map_person(p) for p in (resp["json"] or {}).get("results", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("event[]")
 @connection("api")
 async def list_events(*, project_id: str, event: str = None, limit: int = None, after: str = None, before: str = None, **params) -> list[dict]:
@@ -118,6 +122,7 @@ async def list_events(*, project_id: str, event: str = None, limit: int = None, 
     return [_map_event(e) for e in (resp["json"] or {}).get("results", [])]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("event")
 @connection("api")
 async def get_event(*, project_id: str, id: str, **params) -> dict:
@@ -132,6 +137,7 @@ async def get_event(*, project_id: str, id: str, **params) -> dict:
     return _map_event(resp["json"])
 
 
+@test
 @returns({"id": "integer", "uuid": "string", "name": "string", "apiToken": "string"})
 @connection("api")
 async def get_projects(**params) -> list[dict]:
@@ -141,6 +147,7 @@ async def get_projects(**params) -> list[dict]:
     return (resp["json"] or {}).get("results", [])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"columns": "array", "results": "array", "types": "array"})
 @connection("api")
 async def query(*, project_id: str, hogql: str, **params) -> dict:
@@ -156,6 +163,7 @@ async def query(*, project_id: str, hogql: str, **params) -> dict:
     return resp["json"]
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"id": "string", "name": "string", "volume_30_day": "integer", "queryUsage30Day": "integer"})
 @connection("api")
 async def get_event_definitions(*, project_id: str, limit: int = None, **params) -> list[dict]:
@@ -172,6 +180,7 @@ async def get_event_definitions(*, project_id: str, limit: int = None, **params)
     return (resp["json"] or {}).get("results", [])
 
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"id": "string", "distinctId": "string", "startTime": "string", "endTime": "string", "recordingDuration": "number", "activeSeconds": "number", "clickCount": "integer", "keypressCount": "integer", "startUrl": "string", "viewed": "boolean"})
 @connection("api")
 async def list_recordings(*, project_id: str, limit: int = None, offset: int = None, **params) -> list[dict]:

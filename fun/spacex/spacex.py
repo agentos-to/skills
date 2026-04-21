@@ -1,6 +1,6 @@
 """SpaceX — launch data from the public SpaceX API."""
 
-from agentos import http, returns
+from agentos import http, returns, test
 
 BASE = "https://api.spacexdata.com/v4/launches"
 
@@ -50,6 +50,7 @@ def _format_launch(launch: dict) -> dict:
     }
 
 
+@test
 @returns("event[]")
 async def list_upcoming(limit: int = 10, **params) -> list[dict]:
     """List upcoming SpaceX launches.
@@ -62,6 +63,7 @@ async def list_upcoming(limit: int = 10, **params) -> list[dict]:
     return [_format_launch(l) for l in launches[:limit]]
 
 
+@test(params={'limit': 5})
 @returns("event[]")
 async def list_past(limit: int = 10, **params) -> list[dict]:
     """List recent past SpaceX launches, newest first.
@@ -75,6 +77,7 @@ async def list_past(limit: int = 10, **params) -> list[dict]:
     return [_format_launch(l) for l in launches[:limit]]
 
 
+@test(params={'id': '5eb87d46ffd86e000604b388'})
 @returns("event")
 async def get_launch(id: str, **params) -> dict:
     """Get details for a specific SpaceX launch by ID.

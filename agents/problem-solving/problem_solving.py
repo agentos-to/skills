@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from agentos import llm, progress, returns, shell, timeout
+from agentos import llm, progress, returns, shell, test, timeout
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -376,6 +376,7 @@ def _stamp_feedback(role: str, since: str):
 
 # ── Submit tools (staging) ───────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"saved": "boolean"})
 async def give_feedback(content: str, **params) -> dict:
     """Submit feedback on this skill or the SDK. Call anytime.
@@ -435,6 +436,7 @@ async def submit_review(content: str, **params) -> dict:
 
 # ── evaluate_problem ─────────────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"pass": "boolean", "feedback": "string", "path": "string"})
 @timeout(600)
 async def evaluate_problem(path: str, **params) -> dict:
@@ -611,6 +613,7 @@ async def _review(pain_path: Path, proposal_path: Path, project_dir: Path, **par
     "review_path": "string",
     "rounds": "integer",
 })
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @timeout(1800)
 async def solution(project: str, max_rounds: int = 5, **params) -> dict:
     """Run the adversarial propose ↔ review loop against a pain doc.
@@ -678,6 +681,7 @@ async def solution(project: str, max_rounds: int = 5, **params) -> dict:
 
 # ── closeout ─────────────────────────────────────────────────────────────────
 
+@test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"closeout_path": "string", "commits": "string"})
 @timeout(1800)
 async def closeout(project: str, **params) -> dict:

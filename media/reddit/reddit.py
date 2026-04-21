@@ -3,7 +3,7 @@
 import re
 from datetime import datetime, timezone
 
-from agentos import http, provides, returns, web_read, web_search
+from agentos import http, provides, returns, test, web_read, web_search
 
 _H = http.headers(accept="json")
 
@@ -90,6 +90,7 @@ async def search_posts(query: str, limit: int = 25, sort: str = "relevance", **p
     return [_map_post(c["data"]) for c in data.get("data", {}).get("children", [])]
 
 
+@test(params={'subreddit': 'programming', 'sort': 'hot', 'limit': 3})
 @returns("post[]")
 async def list_posts(subreddit: str, sort: str = "hot", limit: int = 25, **params) -> list[dict]:
     """List posts from a subreddit
@@ -103,6 +104,7 @@ async def list_posts(subreddit: str, sort: str = "hot", limit: int = 25, **param
     return [_map_post(c["data"]) for c in data.get("data", {}).get("children", [])]
 
 
+@test(params={'id': '1qoxwdt', 'url': None})
 @returns("post")
 @provides(web_read, urls=["reddit.com/*/comments/*", "reddit.com/r/*/comments/*"])
 async def get_post(id: str = None, url: str = None, comment_limit: int = None, **params) -> dict:
@@ -206,6 +208,7 @@ async def comments_post(id: str, comment_limit: int = None, **params) -> list[di
     return result
 
 
+@test(params={'subreddit': 'programming'})
 @returns("community")
 async def get_community(subreddit: str, **params) -> dict:
     """Get subreddit metadata

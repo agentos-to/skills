@@ -1,47 +1,27 @@
 ---
 id: mimestream
 capabilities:
-  - http
-  - plist
-  - secrets
-  - sql
+- http
+- plist
+- secrets
+- sql
 name: Mimestream
-description: "Read and search email from Mimestream, a native macOS email client for Gmail"
-color: "#3B82F6"
-website: "https://mimestream.com"
-privacy_url: "https://mimestream.com/privacy"
-
+description: Read and search email from Mimestream, a native macOS email client for
+  Gmail
+color: '#3B82F6'
+website: https://mimestream.com
+privacy_url: https://mimestream.com/privacy
 connections:
   db:
-    sqlite: ~/Library/Containers/com.mimestream.Mimestream/Data/Library/Application Support/Mimestream/Mimestream.sqlite
-
+    sqlite: ~/Library/Containers/com.mimestream.Mimestream/Data/Library/Application
+      Support/Mimestream/Mimestream.sqlite
 accounts:
   list_via: list_accounts
   id_field: email
-
 product:
   name: Mimestream
   website: https://mimestream.com
   developer: Mimestream LLC
-
-test:
-  list_accounts: {}
-  list_mailboxes: {}
-  list_emails:
-    params:
-      limit: 5
-  list_conversations:
-    params:
-      limit: 5
-  # Id-scoped ops need a live email/conversation id — skip.
-  get_email:
-    skip: true
-  get_conversation:
-    skip: true
-  search_emails:
-    skip: true
-  credential_get:
-    skip: true
 ---
 
 # Mimestream
