@@ -8,7 +8,7 @@ import json
 import os
 import glob
 
-from agentos import crypto, sql, connection, returns
+from agentos import crypto, sql, connection, returns, test
 from agentos.macos import keychain
 
 HISTORY_DB = "~/Library/Application Support/BraveSoftware/Brave-Browser/Default/History"
@@ -32,6 +32,7 @@ def _map_webpage(row):
     }
 
 
+@test(params={"limit": 3})
 @returns("webpage[]")
 @connection("history")
 async def list_webpages(*, limit=200, **kw):

@@ -10,7 +10,7 @@ All public functions use keyword-only args and accept **params for
 forward-compatibility with engine-injected context.
 """
 
-from agentos import sql, returns
+from agentos import sql, returns, test
 
 DB_PATH = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
 CONTACTS_DB = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite"
@@ -201,6 +201,7 @@ async def op_list_persons(*, conversation_id=None, limit=200, **params):
 # ==============================================================================
 
 
+@test(params={"limit": 3})
 @returns("conversation[]")
 async def op_list_conversations(*, archived=False, limit=200, **params):
     """List WhatsApp conversations. Defaults to active (non-archived) chats only."""

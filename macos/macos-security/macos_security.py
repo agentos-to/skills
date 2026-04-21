@@ -10,7 +10,7 @@ import os
 import re
 from pathlib import Path
 
-from agentos import shell, sql, returns, timeout
+from agentos import shell, sql, returns, test, timeout
 
 
 # ── App discovery ──────────────────────────────────────────────────────────────
@@ -133,6 +133,7 @@ def _categorize(entry: dict) -> str | None:
 
 # ── Operations ────────────────────────────────────────────────────────────────
 
+@test
 @returns({"category": "string", "app": "string", "account": "string", "note": "string"})
 async def cmd_audit(**kwargs) -> list[dict]:
     """

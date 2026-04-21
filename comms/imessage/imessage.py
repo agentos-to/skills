@@ -9,7 +9,7 @@ forward-compatibility with engine-injected context.
 
 import json
 
-from agentos import shell, sql, returns
+from agentos import shell, sql, returns, test
 
 DB_PATH = "~/Library/Messages/chat.db"
 
@@ -81,6 +81,7 @@ def _map_message(row):
 # ==============================================================================
 
 
+@test(params={"limit": 3})
 @returns("conversation[]")
 async def op_list_conversations(*, limit=200, **params):
     """List all iMessage/SMS conversations."""
@@ -235,6 +236,7 @@ async def op_search_messages(*, query, limit=200, **params):
 # ==============================================================================
 
 
+@test.skip(reason="destructive — sends real iMessage")
 @returns({"ok": "boolean"})
 async def op_send_message(*, to, text, service="iMessage", **params):
     """Send an iMessage or SMS to a phone number or email."""

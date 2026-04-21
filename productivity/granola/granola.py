@@ -28,7 +28,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agentos import http, connection, provides, returns, timeout, web_read
+from agentos import http, connection, provides, returns, test, timeout, web_read
 
 DEFAULT_API_BASE = "https://api.granola.ai"
 DEFAULT_AUTH_FILE = Path.home() / "Library" / "Application Support" / "Granola" / "supabase.json"
@@ -410,6 +410,7 @@ def _connection_mode(con: object | None) -> str:
     return "api"
 
 
+@test(params={"limit": 3})
 @returns("meeting[]")
 @connection(["api", "cache"])
 async def op_list_meetings(limit: int = 20, page: int = 0, connection: dict | None = None, **_kwargs) -> list:

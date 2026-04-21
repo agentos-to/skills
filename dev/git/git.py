@@ -2,7 +2,7 @@
 
 import json
 import re
-from agentos import shell, returns
+from agentos import shell, returns, test
 
 
 async def _git(*args, cwd=None):
@@ -94,6 +94,7 @@ def _commits_with_stats(raw):
 # ---------------------------------------------------------------------------
 
 
+@test(params={"path": "/Users/joe/dev/agentos/core", "limit": 3})
 @returns("git_commit[]")
 async def list_git_commits(path, limit=100, branch=None, author=None, **params):
     """List recent commits in a git repository. Returns commits newest first with diff stats."""
@@ -150,6 +151,7 @@ async def search_git_commits(path, query, limit=100, **params):
     return _commits_with_stats(raw)
 
 
+@test(params={"path": "/Users/joe/dev/agentos/core"})
 @returns("branch[]")
 async def list_branches(path, **params):
     """List all branches (local and remote) in a repository."""
@@ -203,6 +205,7 @@ async def get_branch(path, name, **params):
     raise RuntimeError(f"Branch not found: {name}")
 
 
+@test(params={"path": "/Users/joe/dev/agentos/core"})
 @returns("repository")
 async def get_repository(path, **params):
     """Get repository info from the local git repo -- remote URL, platform, branch."""
@@ -233,6 +236,7 @@ async def get_repository(path, **params):
     }
 
 
+@test(params={"path": "/Users/joe/dev/agentos/core"})
 @returns("tag[]")
 async def list_tags(path, **params):
     """List all tags in the repository."""
