@@ -1401,10 +1401,21 @@ async def search_address(query: str, resolve: bool = True, **params) -> list:
 @connection("eats")
 @timeout(15)
 async def list_addresses(**params) -> list:
-    """List saved and suggested delivery addresses.
+    """List saved, suggested, and currently-active delivery addresses.
 
-    Backed by getDeliveryLocationsV2. Returns place-shaped entities with
-    full structured addresses, coordinates, delivery notes, and categories.
+    Backed by getDeliveryLocationsV2, which returns three buckets:
+    - SAVED: explicit Home/Work/custom pins the user created. Usually empty
+      for users who never tapped "Save this address."
+    - SUGGESTED: auto-populated from past deliveries, searches, ride pickups.
+      May include points-of-interest like restaurants — NOT safe to trust as
+      a delivery home.
+    - TARGET: the one Uber currently considers "active" for new orders.
+
+    Each returned place exposes `source` (which bucket) and, when Uber set one,
+    a `label` (HOME / WORK / custom nickname). Use `label == "HOME"` to pick the
+    user's home address; fall back to prompting the user if there's no label.
+    Never auto-pick a SUGGESTED entry as the delivery address — it may be a
+    random POI (see pepperoni-to-pizza-restaurant incident, 2026-04-20).
     """
     cookie_header = require_cookies(params, "list_addresses")
 
@@ -1413,7 +1424,7 @@ async def list_addresses(**params) -> list:
 
     places = []
     seen = set()
-    for loc_type, items in locs.items():
+    for source, items in locs.items():  # SAVED / SUGGESTED / TARGET
         if not isinstance(items, list):
             continue
         for item in items:
@@ -1436,6 +1447,13 @@ async def list_addresses(**params) -> list:
                     notes = n
                     break
 
+            # Label (HOME / WORK / custom) — only present on SAVED entries.
+            # Uber keeps it on the item envelope, sometimes under `label`,
+            # sometimes nested in `personalization`. Check both.
+            label = (item.get("label")
+                     or (item.get("personalization") or {}).get("label")
+                     or loc.get("label"))
+
             place = {
                 "id": loc_id,
                 "name": loc.get("name") or loc.get("title", ""),
@@ -1451,8 +1469,10 @@ async def list_addresses(**params) -> list:
                 "streetName": comps.get("STREET_NAME"),
                 "houseNumber": comps.get("HOUSE_NUMBER"),
                 "categories": loc.get("categories") or [],
-                "locationType": loc_type,  # SAVED, SUGGESTED, or TARGET
+                "source": source,  # SAVED / SUGGESTED / TARGET — bucket from Uber
             }
+            if label:
+                place["label"] = label
             if notes:
                 place["deliveryNotes"] = notes
 
@@ -1787,28 +1807,103 @@ def _build_cart_item(product: dict, store_uuid: str) -> dict:
     return item
 
 
+async def _build_delivery_address_from_record(cookie_header: str, delivery_address_uuid: str) -> dict:
+    """Resolve a saved/suggested address UUID to the deliveryAddress shape that
+    createDraftOrderV2 / updateDraftOrderV2 expects.
+
+    The shape was captured 2026-04-20 from a live browser createDraftOrderV2:
+    {latitude, longitude, address:{address1, address2, aptOrSuite, eaterFormattedAddress,
+     title, subtitle, uuid}, reference, referenceType, type, addressComponents}.
+    """
+    resp = await _eats_post(cookie_header, "getDeliveryLocationsV2", {})
+    buckets = resp.get("deliveryLocations") or {}
+    entries = []
+    for bucket in ("SAVED", "SUGGESTED", "TARGET"):
+        for e in (buckets.get(bucket) or []):
+            entries.append(e)
+
+    match = None
+    for e in entries:
+        loc = e.get("location") or {}
+        if loc.get("id") == delivery_address_uuid:
+            match = e
+            break
+    if not match:
+        known = [((e.get("location") or {}).get("id"), (e.get("location") or {}).get("fullAddress")) for e in entries]
+        raise RuntimeError(
+            f"delivery_address_uuid {delivery_address_uuid!r} not found in SAVED/SUGGESTED/TARGET. "
+            f"Call list_addresses to see valid UUIDs. Known: {known}"
+        )
+
+    loc = match["location"]
+    coord = loc.get("coordinate") or {}
+    comps = loc.get("addressComponents") or {}
+    provider = loc.get("provider") or "uber_places"
+    delivery_payload = match.get("deliveryPayload") or {}
+    addr_info = delivery_payload.get("addressInfo") or {}
+
+    return {
+        "latitude": coord.get("latitude"),
+        "longitude": coord.get("longitude"),
+        "address": {
+            "address1": loc.get("addressLine1") or loc.get("name") or "",
+            "address2": loc.get("addressLine2") or "",
+            "aptOrSuite": addr_info.get("APT_OR_SUITE", ""),
+            "eaterFormattedAddress": loc.get("fullAddress") or "",
+            "title": loc.get("title") or loc.get("name") or "",
+            "subtitle": loc.get("subtitle") or "",
+            "uuid": loc.get("id") or "",
+        },
+        "reference": loc.get("id") or "",
+        "referenceType": provider,
+        "type": provider,
+        "addressComponents": {
+            "countryCode": comps.get("COUNTRY_CODE", ""),
+            "firstLevelSubdivisionCode": comps.get("FIRST_LEVEL_SUBDIVISION_CODE", ""),
+            "city": comps.get("CITY", ""),
+            "postalCode": comps.get("POSTAL_CODE", ""),
+        },
+    }
+
+
 @returns("order")
 @connection("eats")
 @timeout(60)
-async def add_to_cart(store_uuid: str, items: list, currency_code: str = "USD", **params) -> dict:
+async def add_to_cart(store_uuid: str, items: list, delivery_address_uuid: str,
+                      currency_code: str = "USD", **params) -> dict:
     """Add items to an Uber Eats cart for a store.
 
+    store_uuid: the store to order from (from get_store / search_stores).
     items: list of product dicts from get_store (must include _raw field).
-    Each item can have an optional "quantity" field (default 1).
-    currency_code: ISO 4217 code (from get_store's currency field, defaults to USD).
+           Each item can have an optional "quantity" field (default 1).
+    delivery_address_uuid: **REQUIRED**. The Uber location UUID from
+           list_addresses(). Pick explicitly; do not guess. `createDraftOrderV2`
+           inherits a server-side "active target" that is not under our control
+           and frequently resolves to the wrong place (e.g. the restaurant
+           itself). To pin the address reliably we always call
+           `updateDraftOrderV2` with an explicit deliveryAddress after create.
+    currency_code: ISO 4217 code (from get_store's currency field, default USD).
 
-    Discards any existing draft for this store and creates a fresh one with
-    ALL items inline via createDraftOrderV2 — the same pattern the browser uses
-    for the Reorder button. This avoids addItemsToDraftOrderV2 which needs
-    additional session state we don't have.
-
-    RE principle: replay, don't reconstruct. See overview.md "Write operations".
-    This is a WRITE operation — it modifies cart state.
+    WRITE operation — modifies cart state. Pair with get_cart to verify, then
+    checkout() to place. Per the readme Pre-checkout Checklist, never call
+    checkout() without first showing the user store, items, delivery address
+    (including deliveryNotes), total, and ETA.
     """
     cookie_header = require_cookies(params, "add_to_cart")
 
     if not items:
         return {"error": "no items to add"}
+    if not delivery_address_uuid:
+        raise RuntimeError(
+            "delivery_address_uuid is required. Call list_addresses() to see "
+            "saved/suggested addresses and pick one explicitly. Skills must "
+            "never silently inherit whatever address happens to be active on "
+            "the Uber account — that previously caused a pizza to be delivered "
+            "to the pizza restaurant."
+        )
+
+    # Resolve the address NOW so we fail loudly before touching cart state.
+    delivery_address = await _build_delivery_address_from_record(cookie_header, delivery_address_uuid)
 
     # Discard any existing draft for this store so we start clean
     drafts_data = await _eats_post(cookie_header, "getDraftOrdersByEaterUuidV1", {"removeAdapters": True})
@@ -1819,7 +1914,7 @@ async def add_to_cart(store_uuid: str, items: list, currency_code: str = "USD", 
     # Build cart items from raw catalog data (replay, don't reconstruct)
     cart_items = [_build_cart_item(item, store_uuid) for item in items]
 
-    # Create draft order with ALL items inline — this is what the browser does
+    # Create draft order with ALL items inline — same pattern the browser uses
     # for the Reorder button. One call, all items, correct catalog data.
     create_body = {
         "isMulticart": True,
@@ -1843,20 +1938,27 @@ async def add_to_cart(store_uuid: str, items: list, currency_code: str = "USD", 
     }
     data = await _eats_post(cookie_header, "createDraftOrderV2", create_body)
 
-    # Extract result from the create response
     draft = data.get("draftOrder", data)
     draft_uuid = draft.get("uuid", "")
-    cart = draft.get("shoppingCart") or {}
-    final_items = cart.get("items") or []
 
-    # Return order-shaped (status: draft) with contains → product[]
+    # Pin the delivery address. createDraftOrderV2 ignores any deliveryAddress
+    # passed in the body — verified 2026-04-20. updateDraftOrderV2 does apply it.
+    update_resp = await _eats_post(cookie_header, "updateDraftOrderV2", {
+        "draftOrderUUID": draft_uuid,
+        "deliveryAddress": delivery_address,
+        "removeAdapters": True,
+    })
+    updated = update_resp.get("draftOrder", update_resp)
+    cart = updated.get("shoppingCart") or draft.get("shoppingCart") or {}
+    final_items = cart.get("items") or []
+    final_address = updated.get("deliveryAddress") or draft.get("deliveryAddress") or {}
+    final_address_obj = final_address.get("address") or {}
+
     total_cents = sum(i.get("price", 0) * i.get("quantity", 1) for i in final_items)
-    draft_currency = data.get("currencyCode") or draft.get("currencyCode")
+    draft_currency = data.get("currencyCode") or draft.get("currencyCode") or currency_code
     return {
-        # Standard fields
         "id": draft_uuid,
         "name": f"Cart ({len(final_items)} items)",
-        # Order shape fields
         "orderId": draft_uuid,
         "status": "draft",
         "totalAmount": total_cents / 100 if total_cents else None,
@@ -1872,6 +1974,11 @@ async def add_to_cart(store_uuid: str, items: list, currency_code: str = "USD", 
             }
             for i in final_items
         ],
+        "shippingAddress": {
+            "fullAddress": final_address_obj.get("eaterFormattedAddress") or final_address_obj.get("title"),
+            "latitude": final_address.get("latitude"),
+            "longitude": final_address.get("longitude"),
+        } if final_address else None,
     }
 
 

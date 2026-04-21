@@ -187,6 +187,60 @@ Write: `add_to_cart`, `get_cart`, `clear_cart`, `checkout`, `track_delivery`.
 
 Use `agentos call read '{"skill":"uber"}'` or `load({skill:"uber"})` for the live tool manifest with full param schemas — it's generated from the `@returns` decorators, so it's always in sync with the code.
 
+### Ordering flow (MANDATORY for any agent placing a real order)
+
+Placing a pizza-to-the-pizza-place order once was hilarious. Twice would be
+embarrassing. Follow this sequence every time, in this order:
+
+1. **Find the store.** `search_stores({query})` or use a past order's
+   `store.id` from `list_deliveries` / `get_delivery`.
+2. **Get the menu.** `get_store({store_uuid})`. The returned `offers[]` items
+   carry a hidden `_raw` field with the full catalog payload — `add_to_cart`
+   requires it, so pass `offers` items through directly; don't reconstruct.
+3. **Customizations (if any).** `get_item_customizations({store_uuid, item_uuid})`.
+   The skill now auto-resolves section/subsection UUIDs when omitted.
+4. **Pick an explicit delivery address.** `list_addresses()` → choose by
+   **`source == "SAVED"` + `label == "HOME"`** first. If `SAVED` is empty
+   (common — Uber treats pasted/searched addresses as SUGGESTED until the user
+   explicitly saves them), prompt the user to pick from the SUGGESTED list.
+   **Never auto-pick a SUGGESTED entry.** Uber mixes real addresses and POIs
+   (restaurants, shops) into SUGGESTED; auto-picking got a pizza delivered to
+   the pizza restaurant on 2026-04-20.
+5. **Build the cart.** `add_to_cart({store_uuid, items, delivery_address_uuid})`.
+   The skill creates a draft via `createDraftOrderV2` and then **pins the
+   address via `updateDraftOrderV2`** — `createDraftOrderV2` silently ignores
+   `deliveryAddress` in its own body and inherits whatever the account's
+   "active target" is (the thing that bit us).
+6. **Pre-checkout checklist — SHOW THE USER, then wait for explicit go.**
+   Surface all of:
+   - **Store**: name + address
+   - **Items**: name, customizations, quantity, price each
+   - **Delivery address**: full address **and deliveryNotes** (gate codes,
+     apartment numbers — critical for actual delivery)
+   - **Total** (from the checkout presentation) + fare breakdown
+   - **ETA**
+
+   Do not call `checkout()` without an explicit "place it" from the user.
+7. **Place the order.** `checkout({draft_order_uuid})`. This actually spends
+   money; it's irreversible within seconds.
+8. **Track.** `track_delivery()` polls `getActiveOrdersV1`. Returns driver,
+   eta, and polyline traces — but **only while the order is active**. Once
+   delivered/closed, driver + vehicle info are gone from Uber's API (privacy).
+   `get_delivery` on a completed order returns store + items + fare but no
+   driver.
+
+### `get_messages` is ephemeral
+
+Driver chat via `getEaterMessagingContentV1` only returns content while the
+order is active or very recently delivered. Once the delivery completes and
+Uber closes the chat, **the server returns empty body/head** — no message
+history is persisted to the eater side. If you need a durable record, capture
+messages during `track_delivery` polling, not after.
+
+Also: the skill currently returns `{body, head, messages[]}` on the order
+shape rather than proper `conversation` + `message[]` entities. Known kludge.
+Fix when a future order actually produces a non-empty chat we can shape against.
+
 ### Troubleshooting
 
 **`rtapi.forbidden` on `getUserV1` / `code=3` on `getPastOrdersV1` / `401` on `getDraftOrdersByEaterUuidV1`** — session cookies are visitor-level, not user-level. `search_stores` / anonymous endpoints still work because they don't need a logged-in identity, which masks the failure. The auth-resolver reports `ok` either way because the transport auth works; only the per-endpoint logic rejects.
