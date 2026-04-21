@@ -133,7 +133,7 @@ async def list_emails(*, account=None, mailbox=None, is_unread=None, limit=1000,
         LIMIT :limit
     """, db=DB_PATH, params={
         "account": account,
-        "isUnread": 1 if is_unread is True else (0 if is_unread is False else None),
+        "is_unread": 1 if is_unread is True else (0 if is_unread is False else None),
         "mailbox": mailbox,
         "limit": limit,
     })

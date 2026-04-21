@@ -170,20 +170,20 @@ async def _load_display_names():
 async def _load_displays():
     displays = await _run_swift_json(APP_SYSTEM_PROFILER_SWIFT)
     metadata = await _load_display_names()
-    primary = next((display for display in displays if display.get("is_primary")), None)
+    primary = next((display for display in displays if display.get("isPrimary")), None)
     primary_center_x = _frame_center_x(primary["frame"]) if primary else None
     primary_center_y = _frame_center_y(primary["frame"]) if primary else None
 
     normalized = []
     for display in displays:
-        display_id = str(display["display_id"])
+        display_id = str(display["displayId"])
         extra = metadata.get(display_id, {})
         frame = _normalize_frame(display["frame"])
-        visible_frame = _normalize_frame(display["visible_frame"])
-        is_primary = bool(display.get("is_primary") or extra.get("is_primary"))
+        visible_frame = _normalize_frame(display["visibleFrame"])
+        is_primary = bool(display.get("isPrimary") or extra.get("isPrimary"))
         result = {
             "displayId": display_id,
-            "displayIndex": int(display["display_index"]),
+            "displayIndex": int(display["displayIndex"]),
             "name": extra.get("name") or f"Display {display_id}",
             "isPrimary": is_primary,
             "scale": float(display.get("scale", 1.0)),
@@ -204,7 +204,7 @@ async def _load_displays():
         )
         normalized.append(result)
 
-    normalized.sort(key=lambda display: display["display_index"])
+    normalized.sort(key=lambda display: display["displayIndex"])
     return normalized
 
 
@@ -406,22 +406,22 @@ async def screenshot_display(*, display_id=None, display_index=None, path=None, 
 
     if display_index is not None:
         target = next(
-            (display for display in displays if display["display_index"] == int(display_index)),
+            (display for display in displays if display["displayIndex"] == int(display_index)),
             None,
         )
     elif display_id is not None:
         target = next(
-            (display for display in displays if display["display_id"] == str(display_id)),
+            (display for display in displays if display["displayId"] == str(display_id)),
             None,
         )
     else:
-        target = next((display for display in displays if display["is_primary"]), None)
+        target = next((display for display in displays if display["isPrimary"]), None)
 
     if not target:
         raise ValueError("Display not found")
 
     resolved_path = _resolve_output_path(path, f"display-{target['display_id']}")
-    result = await shell.run("screencapture", args=["-x", "-D", str(target["display_index"]), resolved_path])
+    result = await shell.run("screencapture", args=["-x", "-D", str(target["displayIndex"]), resolved_path])
     if result["exit_code"] != 0:
         raise RuntimeError(f"screencapture failed: {result['stderr'].strip()}")
     return {
@@ -432,8 +432,8 @@ async def screenshot_display(*, display_id=None, display_index=None, path=None, 
         "mimeType": "image/png",
         "width": target.get("width"),
         "height": target.get("height"),
-        "displayId": target["display_id"],
-        "displayIndex": target["display_index"],
+        "displayId": target["displayId"],
+        "displayIndex": target["displayIndex"],
         "published": _iso_now(),
     }
 
@@ -595,7 +595,7 @@ def _display_for_frame(frame, displays):
         overlap = _intersection_area(frame, display["frame"])
         if overlap > best_overlap:
             best_overlap = overlap
-            best_display_id = display["display_id"]
+            best_display_id = display["displayId"]
     return best_display_id
 
 
