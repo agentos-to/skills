@@ -926,11 +926,15 @@ async def get_store(store_uuid: str, **params) -> dict:
     products = []
     seen_uuids = set()
 
+    # Catalog sections come in multiple layout types depending on store vertical.
+    # Grocery stores use HORIZONTAL_GRID; restaurants use VERTICAL_GRID.
+    # Both carry the same catalog shape under payload.standardItemsPayload.
+    _ITEM_GRID_TYPES = {"HORIZONTAL_GRID", "VERTICAL_GRID"}
     for sec_items in sections_map.values():
         if not isinstance(sec_items, list):
             continue
         for item in sec_items:
-            if item.get("type") != "HORIZONTAL_GRID":
+            if item.get("type") not in _ITEM_GRID_TYPES:
                 continue
             payload = item.get("payload") or {}
             std = payload.get("standardItemsPayload") or {}
@@ -1104,6 +1108,30 @@ async def get_item_customizations(store_uuid: str, item_uuid: str, section_uuid:
     options with UUID, title, price, and nested child customizations.
     """
     cookie_header = require_cookies(params, "get_item_customizations")
+
+    # getMenuItemV1 returns `invalid_uuid` (404) when section/subsection are empty.
+    # Look them up from the store catalog when the caller didn't supply them.
+    if not section_uuid or not subsection_uuid:
+        store_data = await _eats_post(cookie_header, "getStoreV1", {"storeUuid": store_uuid})
+        for sec_items in (store_data.get("catalogSectionsMap") or {}).values():
+            if not isinstance(sec_items, list):
+                continue
+            for item in sec_items:
+                if item.get("type") != "HORIZONTAL_GRID":
+                    continue
+                payload = item.get("payload") or {}
+                std = payload.get("standardItemsPayload") or {}
+                for ci in (std.get("catalogItems") or []):
+                    if ci.get("uuid") == item_uuid:
+                        section_uuid = section_uuid or item.get("catalogSectionUUID", "")
+                        subsection_uuid = subsection_uuid or ci.get("subsectionUuid", "")
+                        break
+                if section_uuid and subsection_uuid:
+                    break
+            if section_uuid and subsection_uuid:
+                break
+        if not section_uuid or not subsection_uuid:
+            raise RuntimeError(f"get_item_customizations: could not resolve section/subsection for item {item_uuid} in store {store_uuid}")
 
     # Build the request — sectionUuid and subsectionUuid are required
     body = {
@@ -1927,13 +1955,35 @@ async def checkout(draft_order_uuid: str, **params) -> dict:
 
     # Step 1: Get checkout presentation — we need the checkout session UUID,
     # payment profile, and total fare from this response.
+    # Request shape captured 2026-04-20 via CDP. The old shape (draftOrderUUIDs
+    # array + 10-item payloadTypes) returns 404 "Page not found". Uber now wants
+    # singular draftOrderUUID and the full 40-item payloadTypes list, plus
+    # isGroupOrder / clientFeaturesData / webGiftingPersonalizationEnabled.
     presentation = await _eats_post(cookie_header, "getCheckoutPresentationV1", {
         "payloadTypes": [
-            "paymentBarPayload", "total", "subtotal", "upfrontTipping",
-            "promotion", "fareBreakdown", "eta", "restrictedItems",
-            "orderConfirmations", "paymentProfilesEligibility",
+            "canonicalProductStorePickerPayload", "fulfillmentPromotionInfo",
+            "deliveryOptInInfo", "eta", "fareBreakdown", "upfrontTipping",
+            "basketSizeTracker", "total", "cartItems", "subtotal", "promotion",
+            "disclaimers", "orderConfirmations", "passBanner", "taxProfiles",
+            "addressNudge", "basketSize", "complements", "messageBanner",
+            "merchantMembership", "giftInfo", "restrictedItems",
+            "timeWindowPicker", "locationInfo", "paymentProfilesEligibility",
+            "upsellCatalogSections", "subTotalFareBreakdown",
+            "storeSwitcherActionableBannerPayload",
+            "promoAndMembershipSavingBannerPayloadCheckout",
+            "promoAndMembershipSavingBannerPayload", "venueSectionPicker",
+            "paymentBarPayload", "neutralZonePayload", "allDetailsHeader",
+            "allDetailsActions", "subsRenewalBanner",
+            "splitPaymentMessageBanner", "upsellFeed", "requestUtensilPayload",
         ],
-        "draftOrderUUIDs": [draft_order_uuid],
+        "draftOrderUUID": draft_order_uuid,
+        "isGroupOrder": False,
+        "clientFeaturesData": {
+            "paymentSelectionContext": {
+                "value": _json.dumps({"deviceContext": {"thirdPartyApplications": []}}),
+            },
+        },
+        "webGiftingPersonalizationEnabled": False,
     })
 
     # Extract total and currency
@@ -1948,11 +1998,49 @@ async def checkout(draft_order_uuid: str, **params) -> dict:
     draft = drafts[0] if drafts else {}
     payment_uuid = draft.get("paymentProfileUUID", "")
 
-    # Extract checkout action result params (session UUID + payment plan)
-    # This comes from the presentation response's validation/action flow
-    checkout_session = str(uuid_mod.uuid4())
+    # The presentation response carries a server-issued `useCaseKey` that the
+    # checkout endpoint validates against. We MUST echo it back verbatim —
+    # generating a random one fails with "invalid.request.error" (captured
+    # 2026-04-20). Search the response for it; it typically lives under an
+    # action payload like `paymentBarPayload.primaryAction.actionPayload.useCaseKey`.
+    use_case_key = ""
+    def _find_use_case_key(obj):
+        nonlocal use_case_key
+        if use_case_key or not isinstance(obj, (dict, list)):
+            return
+        if isinstance(obj, dict):
+            if isinstance(obj.get("useCaseKey"), str) and obj["useCaseKey"]:
+                use_case_key = obj["useCaseKey"]
+                return
+            for v in obj.values():
+                _find_use_case_key(v)
+        else:
+            for v in obj:
+                _find_use_case_key(v)
+    _find_use_case_key(presentation)
+
+    # Store metadata for orderRequestedEventMetadata — Uber's analytics hook
+    # that the server now validates. Pull from the draft.
+    store_uuid = draft.get("storeUuid", "") or draft.get("restaurantUUID", "")
+    store_title = draft.get("storeTitle", "") or draft.get("restaurantName", "")
+    city_name = (draft.get("storeCitySlug") or draft.get("citySlug") or "").lower()
 
     # Step 2: Place the order
+    # Shape captured 2026-04-20 from a real browser place-order click.
+    # Missing fields cause 400 invalid.request.error.
+    checkout_session = str(uuid_mod.uuid4())
+    action_value = _json.dumps({
+        "checkoutSessionUUID": checkout_session,
+        "useCaseKey": use_case_key,
+        "actionResults": [],
+        "estimatedPaymentPlan": {
+            "defaultPaymentProfile": {
+                "paymentProfileUUID": payment_uuid,
+                "currencyAmount": {"amountE5": total_e5, "currencyCode": currency},
+            },
+            "useCredits": True,
+        },
+    })
     checkout_body = {
         "draftOrderUUID": draft_order_uuid,
         "storeInstructions": "",
@@ -1960,37 +2048,68 @@ async def checkout(draft_order_uuid: str, **params) -> dict:
         "shareCPFWithRestaurant": False,
         "extraParams": {
             "timezone": "America/Chicago",
-            "trackingCode": "",
+            "trackingCode": None,
+            "storeUuid": store_uuid,
+            "cityName": city_name,
             "paymentIntent": "personal",
+            "isTealiumEnabled": False,
             "paymentProfileTokenType": "braintree",
             "paymentProfileUuid": payment_uuid,
             "isNeutralZoneEnabled": True,
             "isScheduledOrder": False,
-            "orderTotalFare": total_e5,
-            "orderCurrency": currency,
-            "checkoutType": "drafting",
-            "cookieConsent": True,
-            "isAddOnOrder": False,
             "isBillSplitOrder": False,
             "isDraftOrderParticipant": False,
             "isEditScheduledOrder": False,
+            "orderTotalFare": total_e5,
+            "orderCurrency": currency,
+            "verticalLabel": "RESTAURANT",
+            "cookieConsent": True,
+            "checkoutType": "drafting",
+            "isAddOnOrder": False,
+            "isMatchbox": False,
+            "promotionUuid": "",
         },
-        "currentEaterConsent": {"defaultOptIn": False, "eaterConsented": False},
+        "currentEaterConsent": {
+            "defaultOptIn": False,
+            "eaterConsented": False,
+            "orgUUID": "",
+            "optIn": {"dialogText": "", "infoText": ""},
+            "optOut": {"infoText": "", "headerText": "", "bodyText": ""},
+        },
         "newEaterConsented": False,
         "isGroupOrder": False,
         "bypassAuthDeclineForTrustedUser": False,
-        "checkoutActionResultParams": {
-            "value": _json.dumps({
-                "checkoutSessionUUID": checkout_session,
-                "actionResults": [],
-                "estimatedPaymentPlan": {
-                    "defaultPaymentProfile": {
-                        "paymentProfileUUID": payment_uuid,
-                        "currencyAmount": {"amountE5": total_e5, "currencyCode": currency},
-                    },
-                    "useCredits": True,
+        "checkoutActionResultParams": {"value": action_value},
+        "orderRequestedEventMetadata": {
+            "placeOrderClick": {
+                "trackingCode": "",
+                "orderUuid": draft_order_uuid,
+                "store": {
+                    "title": store_title,
+                    "uuid": store_uuid,
+                    "currencyCode": currency,
+                    "status": "OPEN",
+                    "isVirtualized": False,
+                    "locationType": "PHYSICAL",
+                    "isLost": False,
                 },
-            })
+                "diningMode": "DELIVERY",
+                "bypassAuthDeclineForTrustedUser": False,
+                "paymentIntent": "personal",
+                "checkoutType": "drafting",
+                "isBillSplitOrder": False,
+                "isEditScheduledOrder": False,
+                "isDraftOrderParticipant": False,
+                "isGroupOrder": False,
+                "deliveryType": "ASAP",
+                "isScheduled": False,
+                "storeUuid": store_uuid,
+                "isBundle": False,
+                "isAddOnOrder": False,
+                "modality": "DELIVERY",
+                "checkoutActionResultsValue": action_value,
+            },
+            "promotionUuid": "",
         },
         "skipOrderRequestedEvent": False,
     }

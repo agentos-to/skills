@@ -179,22 +179,26 @@ Content-Type: application/json
 
 **Key difference from rides:** The `order_types: "EATS"` parameter on the rides GraphQL `Activities` query does NOT work — `EATS` is not a valid enum value in `RVWebCommonActivityOrderType`. Uber Eats order history must be fetched from the Eats-specific `getPastOrdersV1` endpoint.
 
-### Planned Eats operations
+### Eats operations (shipped)
 
-See [Uber Eats E2E spec](../../../docs/specs/uber-eats-e2e.md) for the full plan.
+Read: `check_eats_session`, `get_eats_profile`, `list_deliveries`, `get_delivery`, `get_messages`, `list_nearby_stores`, `search_stores`, `search_products`, `get_store`, `get_item_customizations`, `search_address`, `list_addresses`.
 
-Phase 1 (read):
-- `list_deliveries` — Eats order history via `getPastOrdersV1`
-- `get_delivery` — Full delivery details: `getReceiptByWorkflowUuidV1` for items (HTML parse with lxml), `getPastOrdersV1` for metadata. Note: `getOrderEntityByUuidV1` only works for active orders (404 for completed).
-- `list_stores` — Browse stores via `getSearchHomeV2` or `getFeedV1`
-- `get_menu` — Store menu/items via `getStoreV1` (not yet captured)
+Write: `add_to_cart`, `get_cart`, `clear_cart`, `checkout`, `track_delivery`.
 
-Phase 2 (tracking):
-- `track_delivery` — Live driver location via real-time events
-- `list_messages` — Driver communication
+Use `agentos call read '{"skill":"uber"}'` or `load({skill:"uber"})` for the live tool manifest with full param schemas — it's generated from the `@returns` decorators, so it's always in sync with the code.
 
-Phase 3 (write — requires [firewall](../../../docs/specs/firewall.md)):
-- `add_to_cart`, `checkout`, `approve_substitution`, `rate_delivery`
+### Troubleshooting
+
+**`rtapi.forbidden` on `getUserV1` / `code=3` on `getPastOrdersV1` / `401` on `getDraftOrdersByEaterUuidV1`** — session cookies are visitor-level, not user-level. `search_stores` / anonymous endpoints still work because they don't need a logged-in identity, which masks the failure. The auth-resolver reports `ok` either way because the transport auth works; only the per-endpoint logic rejects.
+
+Two common causes:
+
+1. **Brave cookie staleness.** Brave (and all Chromium browsers) buffer cookie writes and only flush to the on-disk SQLite DB periodically. `get-cookie.py` reads from disk, so after a fresh login the skill sees the *pre-login* cookie set — `uev2.id.session` / `uev2.ts.session` / `jwt-session` are stale, and Uber downgrades the session to visitor. **Fix:** trigger Brave to flush. Easiest: open any ubereats.com page in Brave and let it make at least one authenticated XHR (the `/ramen*/events/recv` or `getUserV1` round-trip will do it). CDP-based `browse-capture.py /orders` also works and is scriptable. Repeat the skill call and it will see the fresh cookies.
+2. **You're actually logged out.** Check that `uev2.id.session_v2` and `sid` are in the extracted cookie set. If not, log in to [ubereats.com](https://www.ubereats.com) in Brave.
+
+**`Multiple accounts. Specify account: Joe, default`** — the skill has two `account` entries in credentials (a legacy one and the current session). Pass `account: "default"` to `run()` to disambiguate. We should collapse these — tracked but not yet done.
+
+**`invalid_uuid` / 404 on `getMenuItemV1`** — `get_item_customizations` needs both `section_uuid` and `subsection_uuid`. The skill now auto-fetches them from `getStoreV1` when omitted; if you see this error again, the item UUID itself is stale or wrong.
 
 ## Reverse Engineering Notes
 
