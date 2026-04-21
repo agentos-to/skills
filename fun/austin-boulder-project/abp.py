@@ -11,7 +11,18 @@ Auth:     AWS Cognito (us-east-1) via USER_PASSWORD_AUTH
 
 import asyncio
 import re
-from agentos import http, returns
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from agentos import http, returns, test
+
+# The gym is physically in Austin and runs on Austin business hours, so
+# "today's classes" always means today *in Austin* — even if the user is
+# in Tokyo. This tz is a property of the data source, not the viewer.
+# Stamped onto every returned entity as the `timezone` field so readers
+# can render UTC timestamps correctly without re-deriving the source tz.
+AUSTIN_TZ_NAME = "America/Chicago"
+AUSTIN_TZ = ZoneInfo(AUSTIN_TZ_NAME)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -262,10 +273,33 @@ async def _get_activities() -> list[dict]:
     return data.get("data", [])
 
 
+def _austin_day_window_utc(date_str: str | None, days: int = 1) -> tuple[str, str, str]:
+    """Compute a midnight-to-midnight UTC window covering `days` days in Austin time.
+
+    Returns `(start_iso_utc, end_iso_utc, start_date_str)`. DST-correct via
+    zoneinfo: works identically during CDT (UTC-5) and CST (UTC-6) windows,
+    and across the shoulder-season transitions where naïve arithmetic is
+    off by an hour.
+    """
+    if date_str:
+        start_local_date = datetime.fromisoformat(date_str).date()
+    else:
+        start_local_date = datetime.now(AUSTIN_TZ).date()
+
+    start_local = datetime.combine(start_local_date, datetime.min.time(), tzinfo=AUSTIN_TZ)
+    end_local = start_local + timedelta(days=days)
+
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc) - timedelta(milliseconds=1)
+    iso = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+    return iso(start_utc), iso(end_utc), start_local_date.isoformat()
+
+
 async def _get_schedule(
     location_id: int = AUSTIN_SPRINGDALE["id"],
     activity_ids: list[int] = None,
     date: str = None,
+    days: int = 1,
 ) -> dict:
     """
     GET https://widgets.api.prod.tilefive.com/cal
@@ -274,7 +308,8 @@ async def _get_schedule(
     Args:
       location_id:  e.g. 6 for Austin Springdale
       activity_ids: e.g. [4, 5, 6] for Climbing, Yoga, Fitness (default)
-      date:         YYYY-MM-DD (default: today in Austin timezone)
+      date:         YYYY-MM-DD, Austin-local (default: today in Austin TZ)
+      days:         number of days from `date` to fetch (default: 1)
 
     Returns dict with:
       bookings:   list of BookingInstance (each class occurrence)
@@ -291,30 +326,10 @@ async def _get_schedule(
       event.maxCustomers  — total capacity
       event.entranceRequirement — "MP" = membership/pass required
     """
-    from datetime import datetime, timezone, timedelta
-
     if activity_ids is None:
         activity_ids = [4, 5, 6]
 
-    if date is None:
-        # Austin is UTC-5/UTC-6; use today in US/Central
-        now_utc = datetime.now(timezone.utc)
-        cst_offset = timedelta(hours=-6)
-        today_cst = (now_utc + cst_offset).date()
-        date = today_cst.isoformat()
-
-    # Day window: midnight CST = UTC+5h or +6h depending on DST
-    # Use simple approach: midnight-to-midnight UTC offset for CST (-6h)
-    start_dt = f"{date}T06:00:00.000Z"   # midnight CST = 06:00 UTC (CDT) or 05:00 UTC (CST)
-    end_dt   = f"{date}T05:59:59.999Z"   # end of next day... approximation; use cal's own range
-
-    # Better: just pass the date range the embed uses (05:00Z start = midnight CST-ish)
-    start_dt = f"{date}T05:00:00.000Z"
-    # end = next calendar day 04:59:59
-    from datetime import date as date_type
-    d = date_type.fromisoformat(date)
-    next_day = (d + timedelta(days=1)).isoformat()
-    end_dt = f"{next_day}T04:59:59.999Z"
+    start_dt, end_dt, _ = _austin_day_window_utc(date, days=days)
 
     return await _request(
         f"{WIDGETS_API}/cal",
@@ -480,7 +495,12 @@ async def _get_my_passes(id_token: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _booking_to_entity(b: dict) -> dict:
-    """Normalise a BookingInstance from /cal into the agentOS class entity shape."""
+    """Normalise a BookingInstance from /cal into the `class` entity shape.
+
+    Times are returned in UTC (matching the source). The `timezone` field
+    names the gym's local zone so a renderer can shift to a human-readable
+    form without re-deriving where the gym lives.
+    """
     event = b.get("event", {})
     activities = event.get("activitys") or []
     activity_name = activities[0].get("name", "") if activities else ""
@@ -498,8 +518,10 @@ def _booking_to_entity(b: dict) -> dict:
         "id": b["id"],
         "name": b["name"],
         "content": " — ".join(desc_parts),
-        "startDate": b["startDT"],
-        "endDate": b["endDT"],
+        "startDate": b.get("startDT"),
+        "endDate": b.get("endDT"),
+        "timezone": AUSTIN_TZ_NAME,
+        "occurrenceDate": b.get("occurrenceDate"),
         "activityType": activity_name,
         "capacity": capacity,
         "spotsRemaining": spots,
@@ -523,14 +545,29 @@ async def _get_id_token(credentials: str) -> str:
 # Operation entrypoints — called by the python: executor with kwargs
 # ---------------------------------------------------------------------------
 
+@test
 @returns("class[]")
-async def op_get_schedule(
+async def get_schedule(
     location_id: int = AUSTIN_SPRINGDALE["id"],
     activity_ids: str = None,
     date: str = None,
+    days: int = 3,
     **params,
 ) -> list[dict]:
-    """Get today's class schedule as entity-shaped dicts."""
+    """Get the upcoming class schedule as entity-shaped dicts.
+
+    The source `/cal` endpoint only returns classes whose start time is
+    in the future — late in the day, "today" is naturally empty. Default
+    `days=3` gives an agent enough horizon to find something to suggest
+    without paginating.
+
+    Args:
+      location_id:  e.g. 6 for Austin Springdale (default), 5 for Westgate
+      activity_ids: comma-separated string ("4,5,6") or list. Default is
+                    all three: Climbing (4), Yoga (5), Fitness (6).
+      date:         YYYY-MM-DD start, Austin-local. Default is today in Austin.
+      days:         number of days from `date` to fetch (default 3)
+    """
     if isinstance(activity_ids, str):
         parsed_ids = [int(x.strip()) for x in activity_ids.split(",") if x.strip()]
     elif isinstance(activity_ids, list):
@@ -541,12 +578,14 @@ async def op_get_schedule(
         location_id=int(location_id),
         activity_ids=parsed_ids,
         date=date or None,
+        days=int(days),
     )
     return [_booking_to_entity(b) for b in result.get("bookings", [])]
 
 
+@test.skip(reason="destructive — actually books a class")
 @returns({"ok": "boolean", "message": "string"})
-async def op_book_class(
+async def book_class(
     booking_instance_id: int,
     num_guests: int = 0,
     **params,
@@ -558,8 +597,9 @@ async def op_book_class(
     return {"ok": True, "message": "Booked successfully", "result": result}
 
 
+@test.skip(reason="destructive — cancels a real reservation")
 @returns({"ok": "boolean", "message": "string"})
-async def op_cancel_booking(
+async def cancel_booking(
     booking_instance_id: int,
     reservation_id: int,
     **params,
@@ -571,16 +611,18 @@ async def op_cancel_booking(
     return {"ok": True, "message": "Cancelled successfully", "result": result}
 
 
+@test.skip(reason="needs ABP login credentials configured in skill settings")
 @returns({"items": "array"})
-async def op_get_my_memberships(**params) -> list[dict]:
+async def get_my_memberships(**params) -> list[dict]:
     """List active memberships for the logged-in account."""
     credentials = params.get("auth", {}).get("key", "")
     id_token = await _get_id_token(credentials)
     return await _get_my_memberships(id_token)
 
 
+@test.skip(reason="needs ABP login credentials configured in skill settings")
 @returns({"items": "array"})
-async def op_get_my_passes(**params) -> list[dict]:
+async def get_my_passes(**params) -> list[dict]:
     """List active class passes for the logged-in account."""
     credentials = params.get("auth", {}).get("key", "")
     id_token = await _get_id_token(credentials)

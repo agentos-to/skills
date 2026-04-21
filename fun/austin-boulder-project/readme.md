@@ -51,12 +51,13 @@ To book classes, add your ABP portal credentials in agentOS skill settings:
 ## Examples
 
 ```js
-// Today's classes at Springdale (default)
+// Next 3 days of classes at Springdale (default)
 run({ skill: "austin-boulder-project", tool: "get_schedule" })
 
-// Tomorrow's yoga classes at Westgate
+// One specific day, yoga only, at Westgate
 run({ skill: "austin-boulder-project", tool: "get_schedule", params: {
   date: "2026-03-18",
+  days: 1,
   location_id: 5,
   activity_ids: "5"
 }})
@@ -66,6 +67,10 @@ run({ skill: "austin-boulder-project", tool: "book_class", params: {
   booking_instance_id: 826115
 }})
 ```
+
+Returned `class` entities carry `startDate` / `endDate` in UTC plus a
+`timezone` field (`"America/Chicago"`) so renderers can shift to local
+time without re-deriving the gym's tz.
 
 ## Technical Notes
 
