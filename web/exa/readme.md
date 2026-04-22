@@ -12,9 +12,6 @@ product:
   name: Exa
   website: https://exa.ai
   developer: Exa AI, Inc.
-tools:
-  search:
-    wraps_as: search
 ---
 
 # Exa

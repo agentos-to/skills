@@ -8,9 +8,6 @@ color: "#F83B1D"
 website: "https://brave.com/search"
 privacy_url: "https://search.brave.com/help/privacy-policy"
 terms_url: "https://brave.com/terms-of-use"
-tools:
-  search:
-    wraps_as: search
 ---
 
 # Brave Search
