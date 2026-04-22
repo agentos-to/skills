@@ -15,7 +15,14 @@ import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from agentos import http, returns, test
+from agentos import connection, http, returns, test
+
+connection("api",
+    auth={"type": "api_key",
+          "header": {"Authorization": ".auth.key"}},
+    label="ABP credentials — enter as email:password",
+    help_url="https://boulderingproject.portal.approach.app/login",
+    optional=True)
 
 AUSTIN_TZ_NAME = "America/Chicago"
 AUSTIN_TZ = ZoneInfo(AUSTIN_TZ_NAME)

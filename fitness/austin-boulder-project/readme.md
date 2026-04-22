@@ -6,16 +6,6 @@ name: Austin Boulder Project
 description: Class schedules and bookings for the Austin Bouldering Project gym
 color: "#1e3a2f"
 website: "https://boulderingproject.portal.approach.app"
-
-connections:
-  api:
-    auth:
-      type: api_key
-      header:
-        Authorization: .auth.key
-    label: ABP credentials — enter as email:password
-    help_url: https://boulderingproject.portal.approach.app/login
-    optional: true
 ---
 
 # Austin Boulder Project
