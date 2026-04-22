@@ -50,7 +50,7 @@ connection(
     'dashboard',
     base_url='https://dashboard.exa.ai',
     domain='exa.ai',
-    mode='browser',
+    client='browser',
     auth={'type': 'cookies', 'domain': '.exa.ai', 'names': ['next-auth.session-token'], 'account': {'check': 'check_session'}, 'login': [{'email_code': True}, {'sso': 'google'}]})
 
 
