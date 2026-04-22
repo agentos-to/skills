@@ -7,11 +7,6 @@ name: iMessage
 description: Send and read iMessages and SMS from macOS Messages app
 color: "#34C759"
 website: "https://support.apple.com/messages"
-
-connections:
-  db:
-    sqlite: ~/Library/Messages/chat.db
-
 product:
   name: iMessage
   website: https://support.apple.com/messages

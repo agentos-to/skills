@@ -10,7 +10,13 @@ All public functions use keyword-only args and accept **params for
 forward-compatibility with engine-injected context.
 """
 
-from agentos import sql, returns, test
+from agentos import connection, returns, sql, test
+
+
+connection(
+    'db',
+    sqlite='~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite')
+
 
 DB_PATH = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
 CONTACTS_DB = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite"

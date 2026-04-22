@@ -6,19 +6,6 @@ name: Amazon
 description: Search products, get details, and access your Amazon account
 color: '#FF9900'
 website: https://www.amazon.com
-connections:
-  public:
-    description: "Public Amazon pages and autocomplete API \u2014 no auth needed"
-  web:
-    description: "Amazon account \u2014 orders, recommendations, account details"
-    base_url: https://www.amazon.com
-    auth:
-      type: cookies
-      domain: .amazon.com
-      account:
-        check: check_session
-    label: Amazon Session
-    help_url: https://www.amazon.com/ap/signin
 product:
   name: Amazon
   website: https://amazon.com

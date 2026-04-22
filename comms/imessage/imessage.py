@@ -9,7 +9,13 @@ forward-compatibility with engine-injected context.
 
 import json
 
-from agentos import shell, sql, returns, test
+from agentos import connection, returns, shell, sql, test
+
+
+connection(
+    'db',
+    sqlite='~/Library/Messages/chat.db')
+
 
 DB_PATH = "~/Library/Messages/chat.db"
 

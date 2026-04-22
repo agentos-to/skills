@@ -2,6 +2,15 @@
 
 from agentos import connection, http, returns, test
 
+
+connection(
+    'api',
+    base_url='https://api.gandi.net/v5',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='Personal Access Token',
+    help_url='https://admin.gandi.net/organizations/account/pat')
+
+
 GANDI_BASE = "https://api.gandi.net/v5"
 
 

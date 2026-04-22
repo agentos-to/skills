@@ -13,6 +13,21 @@ from agentos import claims, connection, email_lookup, get_cookies, http, molt, p
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
+
+connection(
+    'graphql',
+    description='Public AppSync GraphQL — API key auto-discovered from JS bundles')
+
+connection(
+    'web',
+    description='Goodreads user cookies for viewer-scoped data (friends, shelves, books, reviews)',
+    base_url='https://www.goodreads.com',
+    auth={'type': 'cookies', 'domain': '.goodreads.com', 'account': {'check': 'check_session'}},
+    label='Goodreads Session',
+    help_url='https://www.goodreads.com/user/sign_in',
+    optional=True)
+
+
 BASE = "https://www.goodreads.com"
 MAX_PAGES = 20
 PER_PAGE_FRIENDS = 30

@@ -24,6 +24,16 @@ import sys
 
 from agentos import http, connection, returns, timeout
 
+
+connection(
+    'api',
+    base_url='https://here.now/api/v1',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='API Key',
+    help_url='https://here.now',
+    optional=True)
+
+
 BASE_URL = "https://here.now/api/v1"
 
 

@@ -10,6 +10,12 @@ from datetime import datetime, timedelta, timezone
 
 from agentos import connection, http, provides, returns, test, timeout, web_read
 
+connection(
+    'api',
+    base_url='https://www.googleapis.com/calendar/v3',
+    auth={'type': 'oauth', 'service': 'google', 'scopes': ['https://www.googleapis.com/auth/calendar.events']})
+
+
 BASE_URL = "https://www.googleapis.com/calendar/v3"
 
 VIRTUAL_PATTERNS = [

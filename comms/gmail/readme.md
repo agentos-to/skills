@@ -7,30 +7,6 @@ description: "Full-featured Gmail — read, search, send, reply, forward, label,
 color: "#EA4335"
 website: "https://mail.google.com"
 privacy_url: "https://policies.google.com/privacy"
-
-connections:
-  gmail:
-    base_url: https://gmail.googleapis.com/gmail/v1/users/me
-    domain: gmail.googleapis.com
-    auth:
-      type: oauth
-      service: google
-      scopes:
-      - https://mail.google.com/
-  sync:
-    base_url: https://mail.google.com
-    domain: mail.google.com
-    auth:
-      type: cookies
-      domain: .google.com
-      names:
-      - SID
-      - HSID
-      - SSID
-      - OSID
-      - __Secure-1PSID
-      - __Secure-3PSID
-
 product:
   name: Gmail
   website: https://mail.google.com

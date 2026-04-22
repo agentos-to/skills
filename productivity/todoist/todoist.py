@@ -1,6 +1,15 @@
 import re
 from agentos import connection, http, provides, returns, test, web_read
 
+
+connection(
+    'api',
+    base_url='https://api.todoist.com/api/v1',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='API Token',
+    help_url='https://todoist.com/help/articles/find-your-api-token-Jpzx9IIlB')
+
+
 API_BASE = "https://api.todoist.com/api/v1"
 
 

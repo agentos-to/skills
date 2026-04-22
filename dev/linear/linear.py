@@ -4,7 +4,16 @@
 """
 
 import re
-from agentos import claims, http, provides, returns, test, web_read
+from agentos import claims, connection, http, provides, returns, test, web_read
+
+
+connection(
+    'api',
+    base_url='https://api.linear.app/graphql',
+    auth={'type': 'api_key', 'header': {'Authorization': '.auth.key'}},
+    label='API Key',
+    help_url='https://linear.app/settings/api')
+
 
 API_URL = "https://api.linear.app/graphql"
 

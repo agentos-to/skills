@@ -8,9 +8,6 @@ description: Read accounts, transactions, and balance history from Copilot Money
 color: '#6366F1'
 website: https://copilot.money
 privacy_url: https://copilot.money/privacy
-connections:
-  db:
-    sqlite: ~/Library/Group Containers/group.com.copilot.production/database/CopilotDB.sqlite
 ---
 
 # Copilot Money

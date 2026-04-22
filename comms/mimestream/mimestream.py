@@ -7,8 +7,14 @@ All public functions use keyword-only args and accept **params for
 forward-compatibility with engine-injected context.
 """
 
-from agentos import oauth, oauth_auth, provides, returns, sql, test
+from agentos import connection, oauth, oauth_auth, provides, returns, sql, test
 from agentos.macos import keychain, plist
+
+
+connection(
+    'db',
+    sqlite='~/Library/Containers/com.mimestream.Mimestream/Data/Library/Application Support/Mimestream/Mimestream.sqlite')
+
 
 DB_PATH = "~/Library/Containers/com.mimestream.Mimestream/Data/Library/Application Support/Mimestream/Mimestream.sqlite"
 

@@ -28,6 +28,16 @@ import re
 
 from agentos import claims, connection, http, returns, test, timeout
 
+
+connection(
+    'dashboard',
+    base_url='https://app.greptile.com',
+    domain='app.greptile.com',
+    auth={'type': 'cookies', 'domain': 'app.greptile.com', 'names': ['__Secure-authjs.session-token'], 'account': {'check': 'check_session'}},
+    label='Dashboard session',
+    help_url='https://app.greptile.com/settings/organization/people')
+
+
 DASHBOARD_BASE = "https://app.greptile.com"
 
 # The actual backend API host. Express-powered, but org/people mutations go

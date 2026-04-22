@@ -20,6 +20,18 @@ from pathlib import Path
 from agentos import connection, http, provides, returns, shell, test, timeout
 from agentos.tools import llm
 
+
+connection(
+    'api',
+    description='Ollama REST API — fast inference path, requires server to be running',
+    base_url='http://localhost:11434')
+
+connection(
+    'cli',
+    description='Ollama CLI — can start the server, pull/delete models, management ops',
+    vars={'binary': '/opt/homebrew/bin/ollama'})
+
+
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_BINARY = "/opt/homebrew/bin/ollama"
 

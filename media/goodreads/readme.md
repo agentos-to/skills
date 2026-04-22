@@ -10,21 +10,6 @@ product:
   name: Goodreads
   website: https://goodreads.com
   developer: Amazon
-connections:
-  graphql:
-    description: "Public AppSync GraphQL \u2014 API key auto-discovered from JS bundles"
-  web:
-    description: Goodreads user cookies for viewer-scoped data (friends, shelves,
-      books, reviews)
-    base_url: https://www.goodreads.com
-    auth:
-      type: cookies
-      domain: .goodreads.com
-      account:
-        check: check_session
-    optional: true
-    label: Goodreads Session
-    help_url: https://www.goodreads.com/user/sign_in
 ---
 
 # Goodreads Skill

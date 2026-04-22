@@ -2,6 +2,15 @@
 
 from agentos import http, connection, provides, returns, web_search
 
+
+connection(
+    'api',
+    base_url='https://api.search.brave.com/res/v1',
+    auth={'type': 'api_key', 'header': {'X-Subscription-Token': '.auth.key'}},
+    label='API Key',
+    help_url='https://api-dashboard.search.brave.com/app/keys')
+
+
 API_BASE = "https://api.search.brave.com/res/v1"
 
 

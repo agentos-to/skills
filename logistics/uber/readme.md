@@ -7,31 +7,6 @@ description: Ride history, trip details, Eats order history, and account info fr
   Uber
 color: '#000000'
 website: https://uber.com
-connections:
-  web:
-    description: "Uber rider account \u2014 requires cookies from a logged-in browser\
-      \ session"
-    base_url: https://riders.uber.com
-    domain: uber.com
-    auth:
-      type: cookies
-      domain: .uber.com
-      account:
-        check: check_session
-    label: Uber Rider
-    help_url: https://riders.uber.com
-  eats:
-    description: "Uber Eats \u2014 requires cookies from a logged-in ubereats.com\
-      \ browser session"
-    base_url: https://www.ubereats.com
-    domain: ubereats.com
-    auth:
-      type: cookies
-      domain: .ubereats.com
-      account:
-        check: check_eats_session
-    label: Uber Eats
-    help_url: https://www.ubereats.com
 product:
   name: Uber
   website: https://uber.com

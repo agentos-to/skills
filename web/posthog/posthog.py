@@ -2,6 +2,14 @@
 
 from agentos import connection, http, returns, test
 
+
+connection(
+    'api',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='Personal API Key',
+    help_url='https://us.posthog.com/settings/user-api-keys')
+
+
 POSTHOG_BASE = "https://us.posthog.com"
 
 

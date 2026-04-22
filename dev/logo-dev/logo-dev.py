@@ -1,5 +1,13 @@
 from agentos import http, connection, returns, timeout
 
+
+connection(
+    'api',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='Publishable Key',
+    help_url='https://www.logo.dev/dashboard')
+
+
 CDN = "https://img.logo.dev"
 
 

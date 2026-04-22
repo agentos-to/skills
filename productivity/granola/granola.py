@@ -30,6 +30,19 @@ from pathlib import Path
 
 from agentos import http, connection, provides, returns, test, timeout, web_read
 
+
+connection(
+    'api',
+    description='Granola REST API — live data, requires network',
+    base_url='https://api.granola.ai',
+    vars={'token_file': '~/Library/Application Support/Granola/supabase.json'})
+
+connection(
+    'cache',
+    description='Local app cache — instant, offline, read-only',
+    vars={'cache_file': '~/Library/Application Support/Granola/cache-v6.json'})
+
+
 DEFAULT_API_BASE = "https://api.granola.ai"
 DEFAULT_AUTH_FILE = Path.home() / "Library" / "Application Support" / "Granola" / "supabase.json"
 DEFAULT_CACHE_FILE = Path.home() / "Library" / "Application Support" / "Granola" / "cache-v6.json"

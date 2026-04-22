@@ -2,6 +2,15 @@
 
 from agentos import connection, http, returns, test
 
+
+connection(
+    'api',
+    base_url='https://api.porkbun.com/api/json/v3',
+    auth={'type': 'api_key', 'body': {'apikey': '.auth.key | split(":") | .[0]', 'secretapikey': '.auth.key | split(":") | .[1]'}},
+    label='API key and secret',
+    help_url='https://porkbun.com/account/api')
+
+
 API_BASE = "https://api.porkbun.com/api/json/v3"
 
 

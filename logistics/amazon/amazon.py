@@ -29,6 +29,20 @@ from agentos import claims, connection, get_cookies, http, molt, parse_int, requ
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
+
+connection(
+    'public',
+    description='Public Amazon pages and autocomplete API — no auth needed')
+
+connection(
+    'web',
+    description='Amazon account — orders, recommendations, account details',
+    base_url='https://www.amazon.com',
+    auth={'type': 'cookies', 'domain': '.amazon.com', 'account': {'check': 'check_session'}},
+    label='Amazon Session',
+    help_url='https://www.amazon.com/ap/signin')
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MARKETPLACE & DEPARTMENT REGISTRIES
 # ═══════════════════════════════════════════════════════════════════════════════

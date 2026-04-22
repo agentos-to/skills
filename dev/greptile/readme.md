@@ -9,19 +9,6 @@ color: '#16B364'
 website: https://greptile.com
 privacy_url: https://www.greptile.com/privacy
 terms_url: https://www.greptile.com/terms
-connections:
-  dashboard:
-    base_url: https://app.greptile.com
-    domain: app.greptile.com
-    auth:
-      type: cookies
-      domain: app.greptile.com
-      names:
-      - __Secure-authjs.session-token
-      account:
-        check: check_session
-    label: Dashboard session
-    help_url: https://app.greptile.com/settings/organization/people
 product:
   name: Greptile
   website: https://greptile.com

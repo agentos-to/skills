@@ -6,6 +6,15 @@ from datetime import datetime, timezone
 from agentos import connection, http, provides, returns, test
 from agentos.tools import llm
 
+
+connection(
+    'api',
+    base_url='https://openrouter.ai/api/v1',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='API Key',
+    help_url='https://openrouter.ai/keys')
+
+
 API_BASE = "https://openrouter.ai/api/v1"
 
 MODEL_ALIASES = {

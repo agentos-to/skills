@@ -8,15 +8,6 @@ color: '#DE483A'
 website: https://todoist.com
 privacy_url: https://doist.com/privacy
 terms_url: https://doist.com/terms-of-service
-connections:
-  api:
-    base_url: https://api.todoist.com/api/v1
-    auth:
-      type: api_key
-      header:
-        Authorization: '"Bearer " + .auth.key'
-    label: API Token
-    help_url: https://todoist.com/help/articles/find-your-api-token-Jpzx9IIlB
 ---
 
 # Todoist

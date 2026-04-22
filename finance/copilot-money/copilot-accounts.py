@@ -9,7 +9,13 @@ import json
 import glob
 import sys
 import os
-from agentos import claims, returns, test
+from agentos import claims, connection, returns, test
+
+
+connection(
+    'db',
+    sqlite='~/Library/Group Containers/group.com.copilot.production/database/CopilotDB.sqlite')
+
 
 WIDGET_DIR = os.path.expanduser(
     "~/Library/Group Containers/group.com.copilot.production/widget-data"

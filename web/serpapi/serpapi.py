@@ -2,6 +2,15 @@
 
 from agentos import connection, flight_search, http, provides, returns, test
 
+
+connection(
+    'api',
+    base_url='https://serpapi.com',
+    auth={'type': 'api_key', 'query': {'api_key': '.auth.key'}},
+    label='API Key',
+    help_url='https://serpapi.com/manage-api-key')
+
+
 SEARCH_URL = "https://serpapi.com/search"
 
 

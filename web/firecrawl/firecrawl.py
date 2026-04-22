@@ -2,6 +2,15 @@
 
 from agentos import http, connection, provides, returns, web_read
 
+
+connection(
+    'api',
+    base_url='https://api.firecrawl.dev/v1',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='API Key',
+    help_url='https://www.firecrawl.dev/app/api-keys')
+
+
 API_BASE = "https://api.firecrawl.dev/v1"
 
 

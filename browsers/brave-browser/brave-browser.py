@@ -11,6 +11,16 @@ import glob
 from agentos import crypto, sql, connection, returns, test
 from agentos.macos import keychain
 
+
+connection(
+    'history',
+    sqlite='~/Library/Application Support/BraveSoftware/Brave-Browser/Default/History')
+
+connection(
+    'cookies_db',
+    sqlite='~/Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies')
+
+
 HISTORY_DB = "~/Library/Application Support/BraveSoftware/Brave-Browser/Default/History"
 COOKIES_DB = "~/Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies"
 BRAVE_BASE = os.path.expanduser("~/Library/Application Support/BraveSoftware/Brave-Browser")

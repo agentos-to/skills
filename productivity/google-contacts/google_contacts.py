@@ -8,6 +8,13 @@ import re
 
 from agentos import connection, http, returns, test, timeout
 
+
+connection(
+    'api',
+    base_url='https://people.googleapis.com/v1',
+    auth={'type': 'oauth', 'service': 'google', 'scopes': ['https://www.googleapis.com/auth/contacts']})
+
+
 BASE_URL = "https://people.googleapis.com/v1"
 
 PERSON_FIELDS = ",".join([

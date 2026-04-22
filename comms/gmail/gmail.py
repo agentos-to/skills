@@ -14,6 +14,20 @@ from email.mime.text import MIMEText
 
 from agentos import http, connection, provides, returns, timeout, web_read
 
+connection(
+    'gmail',
+    base_url='https://gmail.googleapis.com/gmail/v1/users/me',
+    domain='gmail.googleapis.com',
+    auth={'type': 'oauth', 'service': 'google', 'scopes': ['https://mail.google.com/']})
+
+
+connection(
+    'sync',
+    base_url='https://mail.google.com',
+    domain='mail.google.com',
+    auth={'type': 'cookies', 'domain': '.google.com', 'names': ['SID', 'HSID', 'SSID', 'OSID', '__Secure-1PSID', '__Secure-3PSID']})
+
+
 BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 

@@ -2077,6 +2077,26 @@ async def checkout(draft_order_uuid: str, **params) -> dict:
 
     RE principle: replay, don't reconstruct. The checkout request shape was captured
     from a live browser order placement. See requirements.md for the full shape.
+
+connection(
+    'web',
+    description='Uber rider account — requires cookies from a logged-in browser session',
+    base_url='https://riders.uber.com',
+    domain='uber.com',
+    auth={'type': 'cookies', 'domain': '.uber.com', 'account': {'check': 'check_session'}},
+    label='Uber Rider',
+    help_url='https://riders.uber.com')
+
+connection(
+    'eats',
+    description='Uber Eats — requires cookies from a logged-in ubereats.com browser session',
+    base_url='https://www.ubereats.com',
+    domain='ubereats.com',
+    auth={'type': 'cookies', 'domain': '.ubereats.com', 'account': {'check': 'check_eats_session'}},
+    label='Uber Eats',
+    help_url='https://www.ubereats.com')
+
+
     """
     cookie_header = require_cookies(params, "checkout")
 

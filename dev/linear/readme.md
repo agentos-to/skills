@@ -8,15 +8,6 @@ color: '#636FD3'
 website: https://linear.app
 privacy_url: https://linear.app/privacy
 terms_url: https://linear.app/terms
-connections:
-  api:
-    base_url: https://api.linear.app/graphql
-    auth:
-      type: api_key
-      header:
-        Authorization: .auth.key
-    label: API Key
-    help_url: https://linear.app/settings/api
 ---
 
 # Linear

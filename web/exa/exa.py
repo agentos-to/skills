@@ -37,6 +37,22 @@ Key format: UUID (e.g. "5bcbb3da-e415-44f1-8e57-10e92177f378").
 
 from agentos import claims, connection, http, provides, returns, test, timeout, web_read, web_search
 
+
+connection(
+    'api',
+    base_url='https://api.exa.ai',
+    domain='exa.ai',
+    auth={'type': 'api_key', 'header': {'x-api-key': '.auth.key'}},
+    label='API Key',
+    help_url='https://dashboard.exa.ai/api-keys')
+
+connection(
+    'dashboard',
+    base_url='https://dashboard.exa.ai',
+    domain='exa.ai',
+    auth={'type': 'cookies', 'domain': '.exa.ai', 'names': ['next-auth.session-token'], 'account': {'check': 'check_session'}, 'login': [{'email_code': True}, {'sso': 'google'}]})
+
+
 AUTH_BASE = "https://auth.exa.ai"
 API_BASE = "https://api.exa.ai"
 DASHBOARD_BASE = "https://dashboard.exa.ai"

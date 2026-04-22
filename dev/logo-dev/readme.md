@@ -8,15 +8,6 @@ color: "#635BFF"
 website: "https://www.logo.dev"
 privacy_url: "https://www.logo.dev/privacy"
 terms_url: "https://www.logo.dev/terms"
-
-connections:
-  api:
-    auth:
-      type: api_key
-      header:
-        Authorization: '"Bearer " + .auth.key'
-    label: Publishable Key
-    help_url: https://www.logo.dev/dashboard
 ---
 
 # Logo.dev

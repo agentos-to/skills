@@ -8,15 +8,6 @@ color: '#111827'
 website: https://openrouter.ai
 privacy_url: https://openrouter.ai/privacy
 terms_url: https://openrouter.ai/terms
-connections:
-  api:
-    base_url: https://openrouter.ai/api/v1
-    auth:
-      type: api_key
-      header:
-        Authorization: '"Bearer " + .auth.key'
-    label: API Key
-    help_url: https://openrouter.ai/keys
 ---
 
 # OpenRouter

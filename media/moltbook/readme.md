@@ -9,16 +9,6 @@ color: '#FF6B6B'
 website: https://www.moltbook.com
 privacy_url: https://www.moltbook.com/privacy
 terms_url: https://www.moltbook.com/terms
-connections:
-  api:
-    base_url: https://www.moltbook.com/api/v1
-    auth:
-      type: api_key
-      header:
-        Authorization: '"Bearer " + .auth.key'
-    label: API Key
-    help_url: https://www.moltbook.com/skill.md
-    optional: true
 ---
 
 # Moltbook

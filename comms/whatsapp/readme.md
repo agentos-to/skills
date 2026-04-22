@@ -6,11 +6,6 @@ name: WhatsApp
 description: Read WhatsApp messages from local macOS database
 color: "#2CD46B"
 website: "https://www.whatsapp.com/"
-
-connections:
-  db:
-    sqlite: ~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite
-
 product:
   name: WhatsApp
   website: https://whatsapp.com

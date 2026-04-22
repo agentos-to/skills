@@ -2,6 +2,15 @@
 
 from agentos import claims, connection, http, provides, returns, test, web_read
 
+connection(
+    'api',
+    base_url='https://www.moltbook.com/api/v1',
+    auth={'type': 'api_key', 'header': {'Authorization': '"Bearer " + .auth.key'}},
+    label='API Key',
+    help_url='https://www.moltbook.com/skill.md',
+    optional=True)
+
+
 BASE = "https://www.moltbook.com/api/v1"
 
 
