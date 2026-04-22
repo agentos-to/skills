@@ -162,6 +162,24 @@ def _austin_day_window_utc(date_str: str | None, days: int = 1) -> tuple[str, st
     return iso(start_utc), iso(end_utc)
 
 
+def _location_to_entity(loc: dict) -> dict:
+    """Tilefive location → generic `place` shape."""
+    return {
+        "id": loc.get("id"),
+        "name": loc.get("name") or loc.get("locationName") or f"ABP Location {loc.get('id')}",
+        "street": loc.get("address1"),
+        "city": loc.get("city"),
+        "region": loc.get("state"),
+        "postalCode": loc.get("postalCode") or loc.get("zipCode"),
+        "countryCode": loc.get("countryCode") or "US",
+        "latitude": loc.get("latitude"),
+        "longitude": loc.get("longitude"),
+        "phone": loc.get("phone"),
+        "timezone": loc.get("timezone") or AUSTIN_TZ_NAME,
+        "featureType": "poi",
+    }
+
+
 def _booking_to_entity(b: dict) -> dict:
     event = b.get("event", {})
     activities = event.get("activitys") or []
@@ -198,6 +216,24 @@ async def public_authenticate(*, force: bool = False, **params) -> dict:
     Public because these values are embedded in the portal's own JS bundle.
     """
     return await _discover_config(force=bool(force))
+
+
+@test
+@returns("place[]")
+async def get_locations(**params) -> list[dict]:
+    """List all Bouldering Project locations as place entities.
+
+    Austin has two — Springdale (id=6) and Westgate (id=5). Shape-
+    typed so "what gyms are there?" works cross-skill.
+    """
+    cfg = await _discover_config()
+    resp = await http.get(f"{WIDGETS_API}/locations", headers=_widgets_headers(cfg["widgetsApiKey"]))
+    if resp["status"] >= 400:
+        raise RuntimeError(f"/locations -> {resp['status']}")
+    # Tilefive returns {"data": [...]} or raw [...]; handle both
+    raw = resp["json"]
+    rows = raw.get("data") if isinstance(raw, dict) else raw
+    return [_location_to_entity(loc) for loc in (rows or [])]
 
 
 @test
@@ -286,18 +322,72 @@ async def cancel_booking(booking_instance_id: int, reservation_id: int, **params
     return {"ok": True, "message": "Cancelled.", "result": resp.get("json")}
 
 
+def _membership_to_entity(m: dict) -> dict:
+    """Tilefive membership → generic `membership` shape."""
+    mt = m.get("membershipType") or {}
+    # Tilefive's `isRecurring` is 1/0; `billingType` is opaque (e.g. "DOP").
+    # `durationType` (YEAR/MONTH/WEEK) is a cleaner standard cadence.
+    cadence = (mt.get("durationType") or "").lower() or None
+    cadence_map = {"year": "annual", "month": "monthly", "week": "weekly"}
+    return {
+        "id": m["id"],
+        "name": mt.get("name") or f"Membership {m['id']}",
+        "tier": mt.get("name"),
+        "status": m.get("status"),
+        "startEffectiveDate": m.get("startEffectiveDate"),
+        "endEffectiveDate": m.get("endEffectiveDate"),
+        "nextBillDate": m.get("nextBillDate"),
+        "autoRenew": bool(m.get("isRecurring")),
+        "price": m.get("price"),
+        "currency": "USD",
+        "billingType": cadence_map.get(cadence, cadence),
+        "useCount": m.get("useCount"),
+        "guestPassQuantity": m.get("guestPassQuantity"),
+        "content": mt.get("description"),
+    }
+
+
+def _pass_to_entity(p: dict) -> dict:
+    """Tilefive pass → generic `pass` shape."""
+    pt = p.get("passType") or {}
+    status = p.get("status") or ("depleted" if p.get("quantity") == 0 else "active")
+    return {
+        "id": p["id"],
+        "name": pt.get("name") or f"Pass {p['id']}",
+        "status": status,
+        "purchasedDate": p.get("purchasedDate") or p.get("createdAt"),
+        "startEffectiveDate": p.get("startEffectiveDate"),
+        "endEffectiveDate": p.get("endEffectiveDate") or p.get("endEffectiveDT"),
+        "quantity": p.get("quantity"),
+        "purchasedQuantity": p.get("purchasedQuantity"),
+        "isAllDayPass": bool(p.get("isAllDayPass")),
+        "depletedDate": p.get("depletedDate"),
+        "price": p.get("price"),
+        "currency": "USD",
+    }
+
+
 @test.skip(reason="needs credentials")
-@returns({"items": "array"})
+@returns("membership[]")
 async def get_my_memberships(**params) -> list[dict]:
-    """List active memberships for the logged-in account."""
-    return await _authed_get(params, "/customers/memberships")
+    """List memberships held by the logged-in account.
+
+    Returns generic `membership`-shaped entities so agents can ask
+    cross-skill questions like "what memberships do I have?"
+    """
+    raw = await _authed_get(params, "/customers/memberships")
+    return [_membership_to_entity(m) for m in (raw or [])]
 
 
 @test.skip(reason="needs credentials")
-@returns({"items": "array"})
+@returns("pass[]")
 async def get_my_passes(**params) -> list[dict]:
-    """List active class passes for the logged-in account."""
-    return await _authed_get(params, "/customers/passes")
+    """List class passes held by the logged-in account.
+
+    Returns generic `pass`-shaped entities.
+    """
+    raw = await _authed_get(params, "/customers/passes")
+    return [_pass_to_entity(p) for p in (raw or [])]
 
 
 @test.skip(reason="needs credentials")
