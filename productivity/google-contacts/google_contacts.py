@@ -6,7 +6,7 @@ from the Mimestream OAuth provider (googleapis.com / contacts scope).
 
 import re
 
-from agentos import connection, http, returns, test, timeout, client
+from agentos import connection, returns, test, timeout, client
 
 
 connection(

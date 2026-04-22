@@ -1,6 +1,6 @@
 """Firecrawl — browser-rendered web scraping via API."""
 
-from agentos import http, connection, provides, returns, web_read, client
+from agentos import connection, provides, returns, web_read, client
 
 
 connection(

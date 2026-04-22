@@ -12,7 +12,7 @@ version`` header and forces HTTP/1.1 (Cloudflare blocks HTTP/2).
 import base64
 import re
 
-from agentos import claims, client, connection, get_cookies, parse_cookie, provides, returns, test, timeout, web_read
+from agentos import claims, client, connection, provides, returns, test, timeout, web_read
 
 BASE_URL = "https://claude.ai"
 
@@ -60,27 +60,24 @@ async def _get_organizations():
     return data
 
 
-async def _resolve_org_uuid(org_uuid=None, cookie_header=None):
+async def _resolve_org_uuid(org_uuid=None):
     """Resolve the org UUID for chat operations.
 
-    Priority: explicit org_uuid > lastActiveOrg cookie (probed) > /api/organizations.
-    The lastActiveOrg cookie can be stale, so we probe with ?limit=1 before trusting it.
+    Priority: explicit org_uuid > lastActiveOrg cookie (probed) >
+    /api/organizations. The lastActiveOrg cookie can be stale, so we
+    probe with ?limit=1 before trusting it.
     """
     if org_uuid:
         return org_uuid
-    # Try lastActiveOrg cookie — probe with a lightweight ?limit=1 before trusting.
-    if cookie_header:
-        last_active = parse_cookie(cookie_header, "lastActiveOrg")
-        if last_active:
-            # Validate it looks like a UUID before probing
-            import re as _re
-            if _re.match(r'^[0-9a-fA-F-]{36}$', last_active):
-                probe = await _get(
-                    f"{BASE_URL}/api/organizations/{last_active}"
-                    f"/chat_conversations?limit=1"
-                )
-                if probe["status"] == 200:
-                    return last_active
+    # Try lastActiveOrg cookie — probe with ?limit=1 before trusting.
+    last_active = client.cookie("lastActiveOrg")
+    if last_active and re.match(r'^[0-9a-fA-F-]{36}$', last_active):
+        probe = await _get(
+            f"{BASE_URL}/api/organizations/{last_active}"
+            f"/chat_conversations?limit=1"
+        )
+        if probe["status"] == 200:
+            return last_active
     # Slow path: fetch all orgs, find chat-capable one.
     orgs = await _get_organizations()
     for org in orgs:
@@ -168,10 +165,9 @@ async def list_conversations(*, org=None, limit=50, offset=0, **params) -> list:
             limit: Max conversations to return (max 250)
             offset: Pagination offset
         """
-    cookie_header = get_cookies(params)
     limit = int(limit)
     offset = int(offset)
-    resolved_org = await _resolve_org_uuid(org, cookie_header)
+    resolved_org = await _resolve_org_uuid(org)
     convs = await _get_conversations(resolved_org, limit=limit, offset=offset)
     return _format_conversation_list(convs, resolved_org)
 
@@ -186,7 +182,6 @@ async def get_conversation(*, id=None, url=None, org=None, **params) -> dict:
             url: Claude chat URL copied from the browser (web_read)
             org: Org UUID (omit to use session default)
         """
-    cookie_header = get_cookies(params)
     conv_id = id
     if url:
         m = re.search(r"chat/([0-9a-fA-F-]{36})", url)
@@ -194,7 +189,7 @@ async def get_conversation(*, id=None, url=None, org=None, **params) -> dict:
             conv_id = m.group(1)
     if not conv_id:
         raise ValueError("id or url is required for get_conversation")
-    resolved_org = await _resolve_org_uuid(org, cookie_header)
+    resolved_org = await _resolve_org_uuid(org)
     conv = await _get_conversation(resolved_org, conv_id)
     return _format_conversation(conv, resolved_org)
 
@@ -208,7 +203,6 @@ async def search_conversations(*, query="", org=None, limit=20, **params) -> lis
             org: Org UUID (omit to use session default)
             limit: Max results
         """
-    cookie_header = get_cookies(params)
     limit = int(limit)
 
     query_lower = query.lower()
@@ -216,7 +210,7 @@ async def search_conversations(*, query="", org=None, limit=20, **params) -> lis
     offset = 0
     page_size = 50
 
-    resolved_org = await _resolve_org_uuid(org, cookie_header)
+    resolved_org = await _resolve_org_uuid(org)
     while offset < 250:
         page = await _get_conversations(resolved_org, limit=page_size, offset=offset)
         if not page:
@@ -242,12 +236,11 @@ async def import_conversation(*, org=None, limit=5, offset=0, **params) -> list:
             limit: Conversations per batch (keep ≤10 to avoid DB lock)
             offset: Pagination offset
         """
-    cookie_header = get_cookies(params)
     limit = int(limit)
     offset = int(offset)
 
     rows = []
-    resolved_org = await _resolve_org_uuid(org, cookie_header)
+    resolved_org = await _resolve_org_uuid(org)
     convs = await _get_conversations(resolved_org, limit=limit, offset=offset)
     for conv_stub in convs:
         conv_uuid = conv_stub["uuid"]
@@ -282,7 +275,6 @@ async def import_conversation(*, org=None, limit=5, offset=0, **params) -> list:
 @timeout(15)
 async def list_orgs(**params) -> list:
     """List all organizations the user has access to. Returns org UUIDs, names, and capabilities. Use this to discover which org has chat history (look for "chat" in capabilities)."""
-    cookie_header = get_cookies(params)
     return await _get_organizations()
 
 
@@ -312,15 +304,13 @@ def _pick_identity(orgs: list) -> tuple[str, str] | None:
 async def check_session(**params) -> dict:
     """Verify Claude.ai session and identify the logged-in account.
 
-    Validates operational access by resolving the chat org (which probes
-    lastActiveOrg cookie if available), then fetches identity from /api/organizations.
+    Validates operational access by resolving the chat org (probes
+    ``lastActiveOrg`` cookie if available), then fetches identity from
+    ``/api/organizations``. Cookies come from the ambient Jar seeded by
+    the ``web`` connection.
     """
-    cookie_header = get_cookies(params)
-    if not cookie_header:
-        return {"authenticated": False, "error": "no cookies"}
-
     try:
-        await _resolve_org_uuid(cookie_header=cookie_header)
+        await _resolve_org_uuid()
         orgs = await _get_organizations()
     except Exception:
         return {"authenticated": False}

@@ -275,7 +275,6 @@ async def get_channel(url: str, **params) -> dict:
 @returns("channel")
 async def get_avatar_channel(url: str, **params) -> dict:
     """Quick fetch of channel avatar via og:image — ~1s."""
-    from agentos import http
     resp = await client.get(url, timeout=10)
     html = resp["body"]
 

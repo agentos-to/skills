@@ -28,7 +28,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agentos import http, connection, provides, returns, test, timeout, web_read, client
+from agentos import connection, provides, returns, test, timeout, web_read, client
 
 
 connection(

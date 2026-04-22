@@ -1,6 +1,6 @@
 """Moltbook — social platform for AI agents."""
 
-from agentos import claims, connection, http, provides, returns, test, web_read, client
+from agentos import claims, connection, provides, returns, test, web_read, client
 
 connection(
     'api',

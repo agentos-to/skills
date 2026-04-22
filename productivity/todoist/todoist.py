@@ -1,5 +1,5 @@
 import re
-from agentos import connection, http, provides, returns, test, web_read, client
+from agentos import connection, provides, returns, test, web_read, client
 
 
 connection(

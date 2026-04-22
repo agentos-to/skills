@@ -8,7 +8,7 @@ import base64
 import re
 from datetime import datetime, timedelta, timezone
 
-from agentos import connection, http, provides, returns, test, timeout, web_read, client, url
+from agentos import connection, provides, returns, test, timeout, web_read, client, url
 
 connection(
     'api',

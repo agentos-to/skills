@@ -1,6 +1,6 @@
 """PostHog — product analytics: persons, events, recordings, and HogQL queries."""
 
-from agentos import connection, http, returns, test, client
+from agentos import connection, returns, test, client
 
 
 connection(

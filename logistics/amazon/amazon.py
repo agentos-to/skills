@@ -28,7 +28,7 @@ import asyncio
 import time
 from typing import Any
 
-from agentos import claims, client, connection, get_cookies, molt, parse_int, require_cookies, returns, test, timeout, url
+from agentos import claims, client, connection, molt, parse_int, returns, test, timeout, url
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -440,7 +440,6 @@ BASE = "https://www.amazon.com"
 _SKIP_COOKIES = ["csd-key", "csm-hit", "aws-waf-token"]
 
 
-_require_cookies = require_cookies
 
 
 async def _warm_session() -> None:
@@ -556,7 +555,6 @@ DETAIL_STATUS_SEL = SHIPMENT_STATUS_SEL + ["h4"]
 @connection("web")
 async def list_orders(*, filter=None, page=1, **params) -> list[dict[str, Any]]:
     """List Amazon orders from the order history page."""
-    cookie_header = _require_cookies(params, "list_orders")
     order_filter = filter or "last30"
     page = int(page or 1)
 
@@ -794,7 +792,6 @@ def _parse_order_items(card: HtmlElement, *, detail_page: bool = False) -> list[
 @connection("web")
 async def buy_again(**params) -> list[dict[str, Any]]:
     """Get products Amazon recommends for repurchase."""
-    cookie_header = _require_cookies(params, "buy_again")
 
     await _warm_session()
     resp = await _get(
@@ -862,7 +859,6 @@ def _parse_buy_again(body: str) -> list[dict[str, Any]]:
 @timeout(45)
 async def subscriptions(**params) -> dict[str, Any]:
     """List active Subscribe & Save subscriptions and upcoming deliveries."""
-    cookie_header = _require_cookies(params, "subscriptions")
 
     await _warm_session()
 
@@ -1020,7 +1016,6 @@ def _parse_subscriptions(body: str) -> list[dict[str, Any]]:
 @connection("web")
 async def get_order(*, order_id, **params) -> dict[str, Any]:
     """Fetch detailed info for a specific Amazon order."""
-    cookie_header = _require_cookies(params, "get_order")
     if not order_id:
         raise ValueError("order_id is required")
 
@@ -1190,7 +1185,6 @@ MAX_LIST_PAGES = 20
 @connection("web")
 async def list_lists(**params) -> list[dict[str, Any]]:
     """List all of the user's Amazon lists (wishlists, shopping lists, etc.)."""
-    cookie_header = _require_cookies(params, "list_lists")
 
     await _warm_session()
     resp = await _get(
@@ -1254,7 +1248,6 @@ def _parse_lists_nav(body: str) -> list[dict[str, Any]]:
 @timeout(60)
 async def get_list(*, list_id, filter=None, **params) -> dict[str, Any]:
     """Get items from a specific Amazon list by list ID."""
-    cookie_header = _require_cookies(params, "get_list")
     if not list_id:
         raise ValueError("get_list requires a list_id parameter")
     item_filter = filter or "unpurchased"
@@ -1455,7 +1448,6 @@ async def check_session(**params) -> dict[str, Any]:
 
     The email is the canonical identifier (unique per Amazon account).
     """
-    cookie_header = _require_cookies(params, "whoami")
 
     await _warm_session()
     resp = await _get(f"{BASE}/gp/css/homepage.html")

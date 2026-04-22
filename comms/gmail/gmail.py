@@ -12,7 +12,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from agentos import http, connection, provides, returns, timeout, web_read, client
+from agentos import connection, provides, returns, timeout, web_read, client
 
 connection(
     'gmail',
@@ -25,6 +25,7 @@ connection(
     'sync',
     base_url='https://mail.google.com',
     domain='mail.google.com',
+    client='fetch',
     auth={'type': 'cookies', 'domain': '.google.com', 'names': ['SID', 'HSID', 'SSID', 'OSID', '__Secure-1PSID', '__Secure-3PSID']})
 
 
@@ -793,11 +794,6 @@ async def sync_unsubscribe(*, msg_id, thread_id, message_id_header="", label_ids
     Uses the 'sync' connection (cookie-auth from browser), not OAuth.
     Call this AFTER unsubscribe_email to complete the full unsubscribe flow.
     """
-    from agentos import get_cookies
-    cookie_header = get_cookies(params)
-    if not cookie_header:
-        raise ValueError("No Gmail session cookies available. The 'sync' connection requires browser cookies.")
-
     thread_ref = f"thread-f:{thread_id}"
     msg_ref = f"msg-f:{msg_id}"
 
@@ -829,7 +825,6 @@ async def sync_unsubscribe(*, msg_id, thread_id, message_id_header="", label_ids
         SYNC_BASE,
         params={"hl": "en", "c": "0", "rt": "r", "pt": "ji"},
         json=payload,
-        cookies=cookie_header,
     )
 
     status_code = resp.get("status", 0)

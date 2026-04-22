@@ -20,7 +20,7 @@ every invocation.
 import json
 from pathlib import Path
 
-from agentos import http, shell, returns, timeout, connection, provides, client
+from agentos import shell, returns, timeout, connection, provides, client
 from agentos.macos import keychain
 from agentos.tools import llm
 

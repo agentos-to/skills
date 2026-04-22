@@ -22,7 +22,7 @@ import json
 import os
 import sys
 
-from agentos import http, connection, returns, timeout, client
+from agentos import connection, returns, timeout, client
 
 
 connection(

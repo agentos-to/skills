@@ -4,7 +4,7 @@
 """
 
 import re
-from agentos import claims, connection, http, provides, returns, test, web_read, client
+from agentos import claims, connection, provides, returns, test, web_read, client
 
 
 connection(

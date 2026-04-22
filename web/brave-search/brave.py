@@ -1,6 +1,6 @@
 """Brave Search — privacy-focused web search with independent index."""
 
-from agentos import http, connection, provides, returns, web_search, client
+from agentos import connection, provides, returns, web_search, client
 
 
 connection(

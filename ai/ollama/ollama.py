@@ -17,7 +17,7 @@ import asyncio
 import time
 from pathlib import Path
 
-from agentos import connection, http, provides, returns, shell, test, timeout, client
+from agentos import connection, provides, returns, shell, test, timeout, client
 from agentos.tools import llm
 
 

@@ -35,7 +35,7 @@ The dashboard UI masks it, but the API returns it in full.
 Key format: UUID (e.g. "5bcbb3da-e415-44f1-8e57-10e92177f378").
 """
 
-from agentos import claims, connection, http, provides, returns, test, timeout, web_read, web_search, client, url
+from agentos import claims, client, connection, provides, returns, test, timeout, url, web_read, web_search
 
 
 connection(

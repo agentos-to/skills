@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 
-from agentos import connection, http, provides, returns, test, client
+from agentos import connection, provides, returns, test, client
 from agentos.tools import llm
 
 

@@ -1,6 +1,6 @@
 """SerpAPI — Google Flights search via the SerpAPI proxy."""
 
-from agentos import connection, flight_search, http, provides, returns, test, client
+from agentos import connection, flight_search, provides, returns, test, client
 
 
 connection(

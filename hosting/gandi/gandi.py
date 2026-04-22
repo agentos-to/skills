@@ -1,6 +1,6 @@
 """Gandi — domain and DNS management via the Gandi API."""
 
-from agentos import connection, http, returns, test, client
+from agentos import connection, returns, test, client
 
 
 connection(
