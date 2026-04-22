@@ -1,6 +1,6 @@
 """PostHog — product analytics: persons, events, recordings, and HogQL queries."""
 
-from agentos import connection, http, returns, test
+from agentos import connection, http, returns, test, client
 
 
 connection(
@@ -66,8 +66,8 @@ async def list_persons(*, project_id: str, search: str = None, limit: int = None
         q["limit"] = str(limit)
     if offset is not None:
         q["offset"] = str(offset)
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/persons/",
-                    params=q, **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/persons/",
+                    params=q, headers=_auth_header(params))
     return [_map_person(p) for p in (resp["json"] or {}).get("results", [])]
 
 
@@ -81,8 +81,7 @@ async def get_person(*, project_id: str, id: str, **params) -> dict:
             project_id: PostHog project ID
             id: Person UUID
         """
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/persons/{id}/",
-                    **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/persons/{id}/", headers=_auth_header(params))
     return _map_person(resp["json"])
 
 
@@ -99,8 +98,8 @@ async def search_persons(*, project_id: str, query: str, limit: int = None, **pa
     q: dict = {"search": query}
     if limit is not None:
         q["limit"] = str(limit)
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/persons/",
-                    params=q, **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/persons/",
+                    params=q, headers=_auth_header(params))
     return [_map_person(p) for p in (resp["json"] or {}).get("results", [])]
 
 
@@ -125,8 +124,8 @@ async def list_events(*, project_id: str, event: str = None, limit: int = None, 
         q["after"] = after
     if before:
         q["before"] = before
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/events/",
-                    params=q, **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/events/",
+                    params=q, headers=_auth_header(params))
     return [_map_event(e) for e in (resp["json"] or {}).get("results", [])]
 
 
@@ -140,8 +139,7 @@ async def get_event(*, project_id: str, id: str, **params) -> dict:
             project_id: PostHog project ID
             id: Event ID
         """
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/events/{id}/",
-                    **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/events/{id}/", headers=_auth_header(params))
     return _map_event(resp["json"])
 
 
@@ -150,8 +148,7 @@ async def get_event(*, project_id: str, id: str, **params) -> dict:
 @connection("api")
 async def get_projects(**params) -> list[dict]:
     """List all projects the authenticated user has access to"""
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/",
-                    **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/", headers=_auth_header(params))
     return (resp["json"] or {}).get("results", [])
 
 
@@ -165,9 +162,8 @@ async def query(*, project_id: str, hogql: str, **params) -> dict:
             project_id: PostHog project ID
             hogql: HogQL query string
         """
-    resp = await http.post(f"{POSTHOG_BASE}/api/projects/{project_id}/query/",
-                     json={"query": {"kind": "HogQLQuery", "query": hogql}},
-                     **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.post(f"{POSTHOG_BASE}/api/projects/{project_id}/query/",
+                     json={"query": {"kind": "HogQLQuery", "query": hogql}}, headers=_auth_header(params))
     return resp["json"]
 
 
@@ -183,8 +179,8 @@ async def get_event_definitions(*, project_id: str, limit: int = None, **params)
     q: dict = {}
     if limit is not None:
         q["limit"] = str(limit)
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/event_definitions/",
-                    params=q, **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/event_definitions/",
+                    params=q, headers=_auth_header(params))
     return (resp["json"] or {}).get("results", [])
 
 
@@ -202,6 +198,6 @@ async def list_recordings(*, project_id: str, limit: int = None, offset: int = N
         q["limit"] = str(limit)
     if offset is not None:
         q["offset"] = str(offset)
-    resp = await http.get(f"{POSTHOG_BASE}/api/projects/{project_id}/session_recordings/",
-                    params=q, **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{POSTHOG_BASE}/api/projects/{project_id}/session_recordings/",
+                    params=q, headers=_auth_header(params))
     return (resp["json"] or {}).get("results", [])

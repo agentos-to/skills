@@ -1,6 +1,6 @@
 """Brave Search — privacy-focused web search with independent index."""
 
-from agentos import http, connection, provides, returns, web_search
+from agentos import http, connection, provides, returns, web_search, client
 
 
 connection(
@@ -24,12 +24,11 @@ async def search(*, query: str, limit: int = 20, freshness: str = None, **params
     if freshness:
         q_params["freshness"] = freshness
 
-    resp = await http.get(
+    resp = await client.get(
         f"{API_BASE}/web/search",
-        params=q_params,
-        **http.headers(accept="json", extra={
+        params=q_params, headers={
             "X-Subscription-Token": api_key,
-        }),
+        },
     )
 
     results = (resp["json"] or {}).get("web", {}).get("results", [])

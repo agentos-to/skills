@@ -1,5 +1,5 @@
 import re
-from agentos import connection, http, provides, returns, test, web_read
+from agentos import connection, http, provides, returns, test, web_read, client
 
 
 connection(
@@ -67,8 +67,8 @@ async def list_tasks(*, query: str = "today | overdue | #Inbox", **params) -> li
             query: Todoist filter query
         """
     headers = _auth_header(params)
-    resp = await http.get(f"{API_BASE}/tasks/filter",
-                    params={"query": query}, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{API_BASE}/tasks/filter",
+                    params={"query": query}, headers=headers)
     return [_map_task(t) for t in (resp["json"] or {}).get("results", [])]
 
 
@@ -91,7 +91,7 @@ async def list_all_tasks(*, project_id: str = None, section_id: str = None,
     if section_id: q["section_id"] = section_id
     if parent_id: q["parent_id"] = parent_id
     if label: q["label"] = label
-    resp = await http.get(f"{API_BASE}/tasks", params=q, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{API_BASE}/tasks", params=q, headers=headers)
     return [_map_task(t) for t in (resp["json"] or {}).get("results", [])]
 
 
@@ -105,8 +105,8 @@ async def filter_task(*, filter: str, **params) -> list:
             filter: Todoist filter (e.g., 'today', 'overdue', '7 days')
         """
     headers = _auth_header(params)
-    resp = await http.get(f"{API_BASE}/tasks/filter",
-                    params={"query": filter}, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{API_BASE}/tasks/filter",
+                    params={"query": filter}, headers=headers)
     return [_map_task(t) for t in (resp["json"] or {}).get("results", [])]
 
 
@@ -126,7 +126,7 @@ async def get_task(*, id: str = None, url: str = None, **params) -> dict:
         m = re.search(r"/task/([^/?#]+)", url)
         if m:
             id = m.group(1)
-    resp = await http.get(f"{API_BASE}/tasks/{id}", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{API_BASE}/tasks/{id}", headers=headers)
     return _map_task(resp["json"])
 
 
@@ -155,7 +155,7 @@ async def create_task(*, name: str, description: str = None, due: str = None,
     if project_id is not None: body["project_id"] = project_id
     if parent_id is not None: body["parent_id"] = parent_id
     if labels is not None: body["labels"] = labels
-    resp = await http.post(f"{API_BASE}/tasks", json=body, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{API_BASE}/tasks", json=body, headers=headers)
     return _map_task(resp["json"])
 
 
@@ -184,7 +184,7 @@ async def update_task(*, id: str, name: str = None, description: str = None,
     if priority is not None: body["priority"] = 5 - priority
     if labels is not None: body["labels"] = labels
     if project_id is not None: body["project_id"] = project_id
-    resp = await http.post(f"{API_BASE}/tasks/{id}", json=body, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{API_BASE}/tasks/{id}", json=body, headers=headers)
     return _map_task(resp["json"])
 
 
@@ -198,7 +198,7 @@ async def complete_task(*, id: str, **params) -> None:
             id: Task ID
         """
     headers = _auth_header(params)
-    await http.post(f"{API_BASE}/tasks/{id}/close", **http.headers(accept="json", extra=headers))
+    await client.post(f"{API_BASE}/tasks/{id}/close", headers=headers)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -211,7 +211,7 @@ async def reopen_task(*, id: str, **params) -> None:
             id: Task ID
         """
     headers = _auth_header(params)
-    await http.post(f"{API_BASE}/tasks/{id}/reopen", **http.headers(accept="json", extra=headers))
+    await client.post(f"{API_BASE}/tasks/{id}/reopen", headers=headers)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -224,7 +224,7 @@ async def delete_task(*, id: str, **params) -> None:
             id: Task ID
         """
     headers = _auth_header(params)
-    await http.delete(f"{API_BASE}/tasks/{id}", **http.headers(accept="json", extra=headers))
+    await client.delete(f"{API_BASE}/tasks/{id}", headers=headers)
 
 
 @test
@@ -233,7 +233,7 @@ async def delete_task(*, id: str, **params) -> None:
 async def list_projects(**params) -> list:
     """List all projects"""
     headers = _auth_header(params)
-    resp = await http.get(f"{API_BASE}/projects", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{API_BASE}/projects", headers=headers)
     return [_map_project(p) for p in (resp["json"] or {}).get("results", [])]
 
 
@@ -243,7 +243,7 @@ async def list_projects(**params) -> list:
 async def list_tags(**params) -> list:
     """List all tags (labels)"""
     headers = _auth_header(params)
-    resp = await http.get(f"{API_BASE}/labels", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{API_BASE}/labels", headers=headers)
     return [_map_tag(t) for t in (resp["json"] or {}).get("results", [])]
 
 
@@ -265,5 +265,5 @@ async def move_task(*, id: str, project_id: str = None, section_id: str = None,
     if project_id is not None: body["project_id"] = project_id
     if section_id is not None: body["section_id"] = section_id
     if parent_id is not None: body["parent_id"] = parent_id
-    resp = await http.post(f"{API_BASE}/tasks/{id}/move", json=body, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{API_BASE}/tasks/{id}/move", json=body, headers=headers)
     return _map_task(resp["json"])

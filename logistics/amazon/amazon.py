@@ -2,20 +2,23 @@
 """
 Amazon skill — search, products, order history, and account identity.
 
-Uses Amazon's public completion.amazon.com API for keyword suggestions and
-http.client for HTML page parsing. Order history and account operations
-use session cookies from a browser cookie provider. No API keys required.
+Uses Amazon's public completion.amazon.com API for keyword suggestions
+and lxml HTML parsing for account pages. Order history and account
+operations use session cookies from a browser cookie provider via the
+``web`` connection (``client="browser"``). No API keys required.
 
 Transport notes (see docs/reverse-engineering/1-transport/):
-- waf="cf", mode="navigate" — full client hints (Device-Memory, Rtt, etc.) required
-  by Amazon's Lightsaber bot detection. Without these, auth pages redirect to login.
-- skip_cookies=["csd-key", "csm-hit", "aws-waf-token"] — csd-key triggers Siege
-  client-side encryption. Stripping it forces plain HTML responses.
-- Session warming: visit homepage before order/account pages. Amazon flags direct
-  deep-links from new sessions as bot traffic.
-- Accept-Encoding: the engine handles brotli/gzip decompression automatically via
-  reqwest feature flags. Amazon compresses large pages (~168KB order history) with
-  brotli — without decompression, parsers find zero order cards in binary garbage.
+- ``client="browser"`` supplies full client hints (UA, Sec-CH-UA*,
+  Sec-Fetch-*, Accept-*) required by Amazon's Lightsaber bot detection.
+  Without them, auth pages redirect to login.
+- ``skip_cookies=_SKIP_COOKIES`` — ``csd-key`` triggers Siege client-side
+  encryption, ``csm-hit`` and ``aws-waf-token`` trip bot detection.
+  Applied via the ``_get`` / ``_post`` helpers so every authed request
+  strips them.
+- Session warming: ``_warm_session()`` hits the homepage before deep
+  links; Amazon flags cold deep-link sessions as bot traffic.
+- Accept-Encoding: the engine handles brotli/gzip decompression
+  automatically.
 """
 
 import json
@@ -25,19 +28,21 @@ import asyncio
 import time
 from typing import Any
 
-from agentos import claims, connection, get_cookies, http, molt, parse_int, require_cookies, returns, test, timeout
+from agentos import claims, client, connection, get_cookies, molt, parse_int, require_cookies, returns, test, timeout, url
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
 
 connection(
     'public',
-    description='Public Amazon pages and autocomplete API — no auth needed')
+    description='Public Amazon pages and autocomplete API — no auth needed',
+    client='browser')
 
 connection(
     'web',
     description='Amazon account — orders, recommendations, account details',
     base_url='https://www.amazon.com',
+    client='browser',
     auth={'type': 'cookies', 'domain': '.amazon.com', 'account': {'check': 'check_session'}},
     label='Amazon Session',
     help_url='https://www.amazon.com/ap/signin')
@@ -188,15 +193,15 @@ async def search_suggestions(
         params["page-type"] = "Gateway"
         params["site-variant"] = "desktop"
 
-    url = f"https://completion.amazon.{tld}/api/2017/suggestions"
+    u = f"https://completion.amazon.{tld}/api/2017/suggestions"
 
-    resp = await http.get(url, params=params)
+    resp = await client.get(u, params=params)
     data = resp["json"]
 
     suggestions = [
         {
             "value": s["value"],
-            "searchUrl": http.build_url(f"https://www.amazon.{tld}/s", params={"k": s["value"]}),
+            "searchUrl": url.build(f"https://www.amazon.{tld}/s", params={"k": s["value"]}),
             "strategy": s.get("strategyId", "organic"),
             "refTag": s.get("refTag"),
             "department": alias,
@@ -239,15 +244,17 @@ async def search_products(
     if alias != "aps":
         search_params["i"] = alias
 
-    async with http.client() as c:
-        await c.get(base, headers={"Accept": "text/html"})
-        await asyncio.sleep(0.5)
-        resp = await c.get(
-            f"{base}/s",
-            params=search_params,
-            headers={"Accept": "text/html,application/xhtml+xml"},
-        )
-        body = resp["body"]
+    # Session warming: visit homepage first so the jar accumulates
+    # Amazon's anti-bot cookies; /s is then served as a normal browse
+    # continuation, not a cold deep-link.
+    await client.get(base, headers={"Accept": "text/html"})
+    await asyncio.sleep(0.5)
+    resp = await client.get(
+        f"{base}/s",
+        params=search_params,
+        headers={"Accept": "text/html,application/xhtml+xml"},
+    )
+    body = resp["body"]
 
     if _is_captcha(body):
         raise RuntimeError(
@@ -329,14 +336,14 @@ async def get_product(
     tld = mp["tld"]
     base = f"https://www.amazon.{tld}"
 
-    async with http.client() as c:
-        await c.get(base, headers={"Accept": "text/html"})
-        await asyncio.sleep(0.5)
-        resp = await c.get(
-            f"{base}/dp/{asin}",
-            headers={"Accept": "text/html,application/xhtml+xml"},
-        )
-        body = resp["body"]
+    # Warm jar with homepage cookies before hitting the detail page.
+    await client.get(base, headers={"Accept": "text/html"})
+    await asyncio.sleep(0.5)
+    resp = await client.get(
+        f"{base}/dp/{asin}",
+        headers={"Accept": "text/html,application/xhtml+xml"},
+    )
+    body = resp["body"]
 
     if _is_captcha(body):
         raise RuntimeError("Amazon returned a CAPTCHA or block page.")
@@ -436,9 +443,22 @@ _SKIP_COOKIES = ["csd-key", "csm-hit", "aws-waf-token"]
 _require_cookies = require_cookies
 
 
-async def _warm_session(client) -> None:
-    """Visit homepage first to provision session cookies and avoid bot detection on sensitive pages."""
-    await client.get(BASE, headers={"Sec-Fetch-Site": "none"})
+async def _warm_session() -> None:
+    """Visit homepage first so the ambient Jar accumulates Amazon's
+    first-party cookies before a sensitive deep-link; Amazon's anti-bot
+    flags direct deep-links from cold sessions."""
+    await client.get(BASE, headers={"Sec-Fetch-Site": "none"}, skip_cookies=_SKIP_COOKIES)
+
+
+async def _get(u, **kwargs):
+    """client.get with Amazon's mandatory skip_cookies filter pre-applied.
+    Without it, csd-key / csm-hit / aws-waf-token ride the outbound
+    Cookie: header and trip Lightsaber bot detection."""
+    return await client.get(u, skip_cookies=_SKIP_COOKIES, **kwargs)
+
+
+async def _post(u, **kwargs):
+    return await client.post(u, skip_cookies=_SKIP_COOKIES, **kwargs)
     await asyncio.sleep(1.0)
 
 
@@ -544,15 +564,14 @@ async def list_orders(*, filter=None, page=1, **params) -> list[dict[str, Any]]:
     if page > 1:
         url_params["startIndex"] = str((page - 1) * 10)
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
+    await _warm_session()
 
-        resp = await c.get(
-            f"{BASE}/your-orders/orders",
-            params=url_params,
-            headers={"Referer": f"{BASE}/gp/homepage.html"},
-        )
-        body = resp["body"]
+    resp = await _get(
+        f"{BASE}/your-orders/orders",
+        params=url_params,
+        headers={"Referer": f"{BASE}/gp/homepage.html"},
+    )
+    body = resp["body"]
 
     if _is_login_redirect(resp, body):
         raise RuntimeError(
@@ -777,13 +796,12 @@ async def buy_again(**params) -> list[dict[str, Any]]:
     """Get products Amazon recommends for repurchase."""
     cookie_header = _require_cookies(params, "buy_again")
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
-        resp = await c.get(
-            f"{BASE}/gp/buyagain",
-            headers={"Referer": f"{BASE}/your-orders/orders"},
-        )
-        body = resp["body"]
+    await _warm_session()
+    resp = await _get(
+        f"{BASE}/gp/buyagain",
+        headers={"Referer": f"{BASE}/your-orders/orders"},
+    )
+    body = resp["body"]
 
     if _is_login_redirect(resp, body):
         raise RuntimeError(
@@ -846,76 +864,75 @@ async def subscriptions(**params) -> dict[str, Any]:
     """List active Subscribe & Save subscriptions and upcoming deliveries."""
     cookie_header = _require_cookies(params, "subscriptions")
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
+    await _warm_session()
 
-        mgmt_resp = await c.get(
-            f"{BASE}/gp/subscribe-and-save/manager/viewsubscriptions",
-            headers={"Referer": f"{BASE}/your-orders/orders"},
+    mgmt_resp = await _get(
+        f"{BASE}/gp/subscribe-and-save/manager/viewsubscriptions",
+        headers={"Referer": f"{BASE}/your-orders/orders"},
+    )
+
+    if _is_login_redirect(mgmt_resp, mgmt_resp["body"]):
+        raise RuntimeError(
+            "SESSION_EXPIRED: Amazon redirected to login — session cookies are expired or invalid."
         )
 
-        if _is_login_redirect(mgmt_resp, mgmt_resp["body"]):
-            raise RuntimeError(
-                "SESSION_EXPIRED: Amazon redirected to login — session cookies are expired or invalid."
-            )
+    mgmt_soup = _parse(mgmt_resp["body"])
 
-        mgmt_soup = _parse(mgmt_resp["body"])
+    ship_id = None
+    for tab in mgmt_soup.cssselect("[role='tab']"):
+        href = tab.get("href", "")
+        m = re.search(r"shipId=([^&]+)", href)
+        if m:
+            ship_id = m.group(1)
+            break
 
-        ship_id = None
-        for tab in mgmt_soup.cssselect("[role='tab']"):
-            href = tab.get("href", "")
-            m = re.search(r"shipId=([^&]+)", href)
-            if m:
-                ship_id = m.group(1)
-                break
+    deliveries: list[dict[str, Any]] = []
+    for card in mgmt_soup.cssselect(".delivery-card"):
+        date_el = (card.cssselect("h2") or [None])[0]
+        date_text = _text(date_el) if date_el is not None else None
+        full_text = " ".join(card.text_content().split())
 
-        deliveries: list[dict[str, Any]] = []
-        for card in mgmt_soup.cssselect(".delivery-card"):
-            date_el = (card.cssselect("h2") or [None])[0]
-            date_text = _text(date_el) if date_el is not None else None
-            full_text = " ".join(card.text_content().split())
+        edit_deadline = None
+        m = re.search(r"Last day to edit.*?:\s*(\S.*?)(?:\s*You|$)", full_text)
+        if m:
+            edit_deadline = m.group(1).strip()
 
-            edit_deadline = None
-            m = re.search(r"Last day to edit.*?:\s*(\S.*?)(?:\s*You|$)", full_text)
-            if m:
-                edit_deadline = m.group(1).strip()
+        item_count = None
+        m = re.search(r"(\d+)\s+items?\s+in\s+this\s+delivery", full_text)
+        if m:
+            item_count = int(m.group(1))
 
-            item_count = None
-            m = re.search(r"(\d+)\s+items?\s+in\s+this\s+delivery", full_text)
-            if m:
-                item_count = int(m.group(1))
+        if date_text:
+            deliveries.append({
+                "deliveryDate": date_text,
+                "editDeadline": edit_deadline,
+                "itemCount": item_count,
+            })
 
-            if date_text:
-                deliveries.append({
-                    "deliveryDate": date_text,
-                    "editDeadline": edit_deadline,
-                    "itemCount": item_count,
-                })
+    savings = None
+    savings_el = (mgmt_soup.cssselect("h1") or [None])[0]
+    if savings_el is not None:
+        m = re.search(r"\$([\d,.]+)", _text(savings_el) or "")
+        if m:
+            savings = f"${m.group(1)}"
 
-        savings = None
-        savings_el = (mgmt_soup.cssselect("h1") or [None])[0]
-        if savings_el is not None:
-            m = re.search(r"\$([\d,.]+)", _text(savings_el) or "")
-            if m:
-                savings = f"${m.group(1)}"
-
-        items: list[dict[str, Any]] = []
-        if ship_id:
-            ajax_resp = await c.get(
-                f"{BASE}/auto-deliveries/ajax/subscriptionList",
-                params={
-                    "deviceType": "desktop",
-                    "deviceContext": "web",
-                    "shipId": ship_id,
-                },
-                headers={
-                    "Referer": f"{BASE}/auto-deliveries/subscriptionList",
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Accept": "text/html, */*",
-                },
-            )
-            if ajax_resp["status"] == 200:
-                items = _parse_subscriptions(ajax_resp["body"])
+    items: list[dict[str, Any]] = []
+    if ship_id:
+        ajax_resp = await _get(
+            f"{BASE}/auto-deliveries/ajax/subscriptionList",
+            params={
+                "deviceType": "desktop",
+                "deviceContext": "web",
+                "shipId": ship_id,
+            },
+            headers={
+                "Referer": f"{BASE}/auto-deliveries/subscriptionList",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "text/html, */*",
+            },
+        )
+        if ajax_resp["status"] == 200:
+            items = _parse_subscriptions(ajax_resp["body"])
 
     return {
         "totalSavings": savings,
@@ -1007,15 +1024,14 @@ async def get_order(*, order_id, **params) -> dict[str, Any]:
     if not order_id:
         raise ValueError("order_id is required")
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
+    await _warm_session()
 
-        resp = await c.get(
-            f"{BASE}/gp/your-account/order-details",
-            params={"orderID": order_id},
-            headers={"Referer": f"{BASE}/your-orders/orders"},
-        )
-        body = resp["body"]
+    resp = await _get(
+        f"{BASE}/gp/your-account/order-details",
+        params={"orderID": order_id},
+        headers={"Referer": f"{BASE}/your-orders/orders"},
+    )
+    body = resp["body"]
 
     if _is_login_redirect(resp, body):
         raise RuntimeError("SESSION_EXPIRED: Amazon redirected to login — session cookies expired.")
@@ -1176,13 +1192,12 @@ async def list_lists(**params) -> list[dict[str, Any]]:
     """List all of the user's Amazon lists (wishlists, shopping lists, etc.)."""
     cookie_header = _require_cookies(params, "list_lists")
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
-        resp = await c.get(
-            f"{BASE}/hz/wishlist/ls",
-            headers={"Referer": BASE},
-        )
-        body = resp["body"]
+    await _warm_session()
+    resp = await _get(
+        f"{BASE}/hz/wishlist/ls",
+        headers={"Referer": BASE},
+    )
+    body = resp["body"]
 
     if _is_login_redirect(resp, body):
         raise RuntimeError(
@@ -1250,75 +1265,74 @@ async def get_list(*, list_id, filter=None, **params) -> dict[str, Any]:
     list_privacy = None
     list_type = None
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
+    await _warm_session()
 
-        resp = await c.get(
-            f"{BASE}/hz/wishlist/ls/{list_id}",
-            params={"filter": item_filter, "sort": "date-added", "viewType": "list"},
-            headers={"Referer": BASE},
+    resp = await _get(
+        f"{BASE}/hz/wishlist/ls/{list_id}",
+        params={"filter": item_filter, "sort": "date-added", "viewType": "list"},
+        headers={"Referer": BASE},
+    )
+    body = resp["body"]
+
+    if _is_login_redirect(resp, body):
+        raise RuntimeError(
+            "SESSION_EXPIRED: Amazon redirected to login — session cookies are expired or invalid."
         )
-        body = resp["body"]
 
-        if _is_login_redirect(resp, body):
-            raise RuntimeError(
-                "SESSION_EXPIRED: Amazon redirected to login — session cookies are expired or invalid."
-            )
+    soup = _parse(body)
 
-        soup = _parse(body)
+    name_el = (soup.cssselect("#profile-list-name") or [None])[0]
+    list_name = _text(name_el) or "Wish List"
 
-        name_el = (soup.cssselect("#profile-list-name") or [None])[0]
-        list_name = _text(name_el) or "Wish List"
+    privacy_el = (soup.cssselect("#listPrivacy") or [None])[0]
+    list_privacy = _text(privacy_el)
 
-        privacy_el = (soup.cssselect("#listPrivacy") or [None])[0]
-        list_privacy = _text(privacy_el)
+    remember_state = _extract_a_state(soup, "rememberState")
+    if remember_state:
+        list_type = remember_state.get("listType")
 
-        remember_state = _extract_a_state(soup, "rememberState")
-        if remember_state:
-            list_type = remember_state.get("listType")
+    page_items = _parse_list_items(soup)
+    for item in page_items:
+        if item["asin"] not in seen:
+            seen.add(item["asin"])
+            all_items.append(item)
 
-        page_items = _parse_list_items(soup)
+    for _ in range(MAX_LIST_PAGES - 1):
+        scroll_state = _extract_a_state(soup, "scrollState")
+        if not scroll_state:
+            break
+        show_more = scroll_state.get("showMoreUrl")
+        if not show_more:
+            break
+
+        await asyncio.sleep(1.0)
+        ajax_resp = await _get(
+            f"{BASE}{show_more}" if show_more.startswith("/") else show_more,
+            headers={
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"{BASE}/hz/wishlist/ls/{list_id}",
+            },
+        )
+        if ajax_resp["status"] != 200:
+            break
+
+        ajax_body = ajax_resp["body"]
+        ajax_soup = _parse(ajax_body)
+
+        page_items = _parse_list_items(ajax_soup)
+        if not page_items:
+            break
+
+        new_count = 0
         for item in page_items:
             if item["asin"] not in seen:
                 seen.add(item["asin"])
                 all_items.append(item)
+                new_count += 1
+        if new_count == 0:
+            break
 
-        for _ in range(MAX_LIST_PAGES - 1):
-            scroll_state = _extract_a_state(soup, "scrollState")
-            if not scroll_state:
-                break
-            show_more = scroll_state.get("showMoreUrl")
-            if not show_more:
-                break
-
-            await asyncio.sleep(1.0)
-            ajax_resp = await c.get(
-                f"{BASE}{show_more}" if show_more.startswith("/") else show_more,
-                headers={
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Referer": f"{BASE}/hz/wishlist/ls/{list_id}",
-                },
-            )
-            if ajax_resp["status"] != 200:
-                break
-
-            ajax_body = ajax_resp["body"]
-            ajax_soup = _parse(ajax_body)
-
-            page_items = _parse_list_items(ajax_soup)
-            if not page_items:
-                break
-
-            new_count = 0
-            for item in page_items:
-                if item["asin"] not in seen:
-                    seen.add(item["asin"])
-                    all_items.append(item)
-                    new_count += 1
-            if new_count == 0:
-                break
-
-            soup = ajax_soup
+        soup = ajax_soup
 
     return {
         "listId": list_id,
@@ -1443,43 +1457,42 @@ async def check_session(**params) -> dict[str, Any]:
     """
     cookie_header = _require_cookies(params, "whoami")
 
-    async with http.client(cookies=cookie_header, skip_cookies=_SKIP_COOKIES, **http.headers(waf="cf", mode="navigate", accept="html", extra={"Host": "www.amazon.com"})) as c:
-        await _warm_session(c)
-        resp = await c.get(f"{BASE}/gp/css/homepage.html")
+    await _warm_session()
+    resp = await _get(f"{BASE}/gp/css/homepage.html")
 
-        if resp["status"] != 200:
-            return {"authenticated": False, "statusCode": resp["status"]}
+    if resp["status"] != 200:
+        return {"authenticated": False, "statusCode": resp["status"]}
 
-        body = resp["body"]
+    body = resp["body"]
 
-        if "ap/signin" in str(resp["url"]):
-            return {"authenticated": False, "redirect": str(resp["url"])}
+    if "ap/signin" in str(resp["url"]):
+        return {"authenticated": False, "redirect": str(resp["url"])}
 
-        name_match = re.search(
-            r'nav-link-accountList-nav-line-1[^>]*>Hello,\s*([^<]+)<', body
-        )
-        customer_name_match = re.search(
-            r"""\$Nav\.declare\(['"]config\.customerName['"],\s*'([^']+)'\)""", body
-        )
-        customer_id_match = re.search(r'"customerId"\s*:\s*"([A-Z0-9]+)"', body)
-        marketplace_match = re.search(r"ue_mid\s*=\s*'([^']+)'", body)
-        prime_match = re.search(r"isPrimeMember[=:]\s*['\"]?true", body, re.I)
+    name_match = re.search(
+        r'nav-link-accountList-nav-line-1[^>]*>Hello,\s*([^<]+)<', body
+    )
+    customer_name_match = re.search(
+        r"""\$Nav\.declare\(['"]config\.customerName['"],\s*'([^']+)'\)""", body
+    )
+    customer_id_match = re.search(r'"customerId"\s*:\s*"([A-Z0-9]+)"', body)
+    marketplace_match = re.search(r"ue_mid\s*=\s*'([^']+)'", body)
+    prime_match = re.search(r"isPrimeMember[=:]\s*['\"]?true", body, re.I)
 
-        display = (
-            name_match.group(1).strip() if name_match
-            else customer_name_match.group(1).strip() if customer_name_match
-            else None
-        )
-        customer_id = customer_id_match.group(1) if customer_id_match else None
-        marketplace_id = marketplace_match.group(1) if marketplace_match else None
+    display = (
+        name_match.group(1).strip() if name_match
+        else customer_name_match.group(1).strip() if customer_name_match
+        else None
+    )
+    customer_id = customer_id_match.group(1) if customer_id_match else None
+    marketplace_id = marketplace_match.group(1) if marketplace_match else None
 
-        # Fetch Login & Security page to get the account email.
-        email = None
-        manage_resp = await c.get(f"{BASE}/ax/account/manage")
-        if manage_resp["status"] == 200 and "ap/signin" not in str(manage_resp["url"]):
-            email_match = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", manage_resp["body"])
-            if email_match:
-                email = email_match.group(0)
+    # Fetch Login & Security page to get the account email.
+    email = None
+    manage_resp = await _get(f"{BASE}/ax/account/manage")
+    if manage_resp["status"] == 200 and "ap/signin" not in str(manage_resp["url"]):
+        email_match = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", manage_resp["body"])
+        if email_match:
+            email = email_match.group(0)
 
     return {
         "authenticated": True,

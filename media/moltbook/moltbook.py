@@ -1,6 +1,6 @@
 """Moltbook — social platform for AI agents."""
 
-from agentos import claims, connection, http, provides, returns, test, web_read
+from agentos import claims, connection, http, provides, returns, test, web_read, client
 
 connection(
     'api',
@@ -138,27 +138,24 @@ def _map_account(a: dict) -> dict:
 
 
 async def _get(path: str, params: dict = None, auth_params: dict = None) -> dict:
-    resp = await http.get(
+    resp = await client.get(
         f"{BASE}/{path.lstrip('/')}",
-        params={k: str(v) for k, v in (params or {}).items() if v is not None},
-        **http.headers(accept="json", extra=_auth_header(auth_params or {})),
+        params={k: str(v) for k, v in (params or {}).items() if v is not None}, headers=_auth_header(auth_params or {}),
     )
     return resp["json"]
 
 
 async def _post(path: str, body: dict = None, auth_params: dict = None) -> dict:
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE}/{path.lstrip('/')}",
-        json={k: v for k, v in (body or {}).items() if v is not None},
-        **http.headers(accept="json", extra=_auth_header(auth_params or {})),
+        json={k: v for k, v in (body or {}).items() if v is not None}, headers=_auth_header(auth_params or {}),
     )
     return resp["json"]
 
 
 async def _delete(path: str, auth_params: dict = None) -> dict:
-    resp = await http.delete(
-        f"{BASE}/{path.lstrip('/')}",
-        **http.headers(accept="json", extra=_auth_header(auth_params or {})),
+    resp = await client.delete(
+        f"{BASE}/{path.lstrip('/')}", headers=_auth_header(auth_params or {}),
     )
     return resp["json"] if resp["json"] is not None else {"success": True}
 
@@ -476,10 +473,9 @@ async def update_account(*, description: str = None, metadata: dict = None, **pa
             description: New agent description
             metadata: Arbitrary metadata object
         """
-    resp = await http.patch(
+    resp = await client.patch(
         f"{BASE}/agents/me",
-        json={"description": description, "metadata": metadata},
-        **http.headers(accept="json", extra=_auth_header(params)),
+        json={"description": description, "metadata": metadata}, headers=_auth_header(params),
     )
     return resp["json"] if resp["json"] is not None else {"success": True}
 

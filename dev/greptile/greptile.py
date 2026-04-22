@@ -3,36 +3,31 @@
 Auth architecture
 -----------------
 Greptile's dashboard (app.greptile.com) uses **Auth.js v5** (the rebrand of
-NextAuth). The session lives in `__Secure-authjs.session-token` — a JWE stored
-as a single (un-chunked, ~1.2KB) cookie on the `app.greptile.com` host.
+NextAuth). The session lives in ``__Secure-authjs.session-token`` — a JWE
+stored as a single (un-chunked, ~1.2KB) cookie on ``app.greptile.com``.
 
-The dashboard session response ALSO contains a `greptileToken` — a short-lived
-HS256 JWT that the browser passes as `Authorization: Bearer <token>` to the
-**backend API** at a separate host (see _backend_base). That backend is where
-org / people / invites actually live — the `/api/auth/session` route on
-app.greptile.com is Auth.js only.
+The dashboard session response ALSO contains a ``greptileToken`` — a
+short-lived HS256 JWT that the browser passes as
+``Authorization: Bearer <token>`` to the **backend API** at a separate host
+(api.greptile.com). That backend is where org / people / invites actually
+live — the ``/api/auth/session`` route on app.greptile.com is Auth.js only.
 
-Transport note: Dashboard is Vercel-hosted and blocks HTTP/2 — use
-`http.headers(waf="vercel")` which sets `http2=False`.
-
-A subtle engine detail: passing the engine-resolved cookie header through
-`http.client(cookies=...)` was observed to *not* round-trip correctly for
-`__Host-`/`__Secure-` prefixed Auth.js cookies (session came back null even
-though the cookies were fresh). Passing the same cookies as a raw
-`Cookie:` header on each one-shot `http.get/post` works. All tools here use
-the one-shot path.
+Transport note: Dashboard is Vercel-hosted and blocks HTTP/2; all
+dashboard calls pass ``http2=False``. The backend (api.greptile.com)
+accepts HTTP/2.
 """
 
 import json
 import re
 
-from agentos import claims, connection, http, returns, test, timeout
+from agentos import claims, client, connection, returns, test, timeout, url
 
 
 connection(
     'dashboard',
     base_url='https://app.greptile.com',
     domain='app.greptile.com',
+    client='fetch',
     auth={'type': 'cookies', 'domain': 'app.greptile.com', 'names': ['__Secure-authjs.session-token'], 'account': {'check': 'check_session'}},
     label='Dashboard session',
     help_url='https://app.greptile.com/settings/organization/people')
@@ -62,55 +57,45 @@ VALID_ROLES = ("ADMIN", "MEMBER")
 # ---------------------------------------------------------------------------
 
 
-def _merge_headers(*, cookie_header: str | None, extra: dict | None = None) -> dict:
-    """Build a browser-ish request header dict with our Cookie header pinned."""
-    hdrs = http.headers(waf="vercel", accept="json", extra=extra or {})
-    out = dict(hdrs.get("headers", {}))
-    if cookie_header:
-        out["Cookie"] = cookie_header
-    return out
+async def _dashboard_get(path: str, *, extra: dict | None = None) -> dict:
+    """GET against the dashboard — ambient fetch bundle + http2=False for
+    Vercel, cookies ride from the ambient Jar."""
+    u = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
+    return await client.get(u, headers=extra or {}, http2=False)
 
 
-async def _dashboard_get(path: str, *, cookie_header: str, extra: dict | None = None) -> dict:
-    url = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
-    headers = _merge_headers(cookie_header=cookie_header, extra=extra)
-    return await http.get(url, headers=headers, http2=False)
-
-
-async def _dashboard_post(path: str, *, cookie_header: str, json_body: dict | None = None,
+async def _dashboard_post(path: str, *, json_body: dict | None = None,
                           data: dict | None = None, extra: dict | None = None) -> dict:
-    url = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
-    headers = _merge_headers(cookie_header=cookie_header, extra=extra)
+    u = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
     if json_body is not None:
-        return await http.post(url, json=json_body, headers=headers, http2=False)
-    return await http.post(url, data=data or {}, headers=headers, http2=False)
+        return await client.post(u, json=json_body, headers=extra or {}, http2=False)
+    return await client.post(u, data=data or {}, headers=extra or {}, http2=False)
 
 
 async def _backend_request(method: str, path: str, *, bearer: str,
                            json_body: dict | None = None, extra: dict | None = None) -> dict:
     """Call the Greptile backend API (api.greptile.com) with the greptileToken."""
-    url = path if path.startswith("http") else f"https://api.greptile.com{path}"
-    headers = dict(http.headers(accept="json").get("headers", {}))
-    headers["Authorization"] = f"Bearer {bearer}"
+    u = path if path.startswith("http") else f"https://api.greptile.com{path}"
+    headers: dict = {"Authorization": f"Bearer {bearer}"}
     if extra:
         headers.update(extra)
     method = method.upper()
     if method == "GET":
-        return await http.get(url, headers=headers)
+        return await client.get(u, headers=headers)
     if method == "POST":
-        return await http.post(url, json=json_body or {}, headers=headers)
+        return await client.post(u, json=json_body or {}, headers=headers)
     if method == "PATCH":
-        return await http.patch(url, json=json_body or {}, headers=headers)
+        return await client.patch(u, json=json_body or {}, headers=headers)
     if method == "DELETE":
-        return await http.delete(url, headers=headers)
+        return await client.delete(u, headers=headers)
     if method == "PUT":
-        return await http.put(url, json=json_body or {}, headers=headers)
+        return await client.put(u, json=json_body or {}, headers=headers)
     raise ValueError(f"Unsupported method: {method}")
 
 
-async def _get_session(cookie_header: str) -> dict | None:
+async def _get_session() -> dict | None:
     """Hit /api/auth/session and return {user, expires} or None."""
-    resp = await _dashboard_get("/api/auth/session", cookie_header=cookie_header)
+    resp = await _dashboard_get("/api/auth/session")
     if resp.get("status") != 200:
         return None
     data = resp.get("json")
@@ -119,9 +104,9 @@ async def _get_session(cookie_header: str) -> dict | None:
     return None
 
 
-async def _require_session(cookie_header: str) -> dict:
+async def _require_session() -> dict:
     """Return the session dict or raise SESSION_EXPIRED so the engine retries."""
-    session = await _get_session(cookie_header)
+    session = await _get_session()
     if not session:
         raise RuntimeError(
             "SESSION_EXPIRED: Greptile dashboard session is missing or invalid — "
@@ -222,19 +207,18 @@ def _normalize_role(role: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _trpc_query(procedure: str, input_args: dict, *, cookie_header: str) -> dict:
-    """GET /api/trpc/<procedure>?input=<urlencoded json>."""
+async def _trpc_query(procedure: str, input_args: dict) -> dict:
+    """GET /api/trpc/<procedure>?input=<urlencoded json>. Ambient Jar
+    supplies cookies; connection's fetch-bundle supplies UA/Sec-*."""
     payload = json.dumps({"json": input_args}, separators=(",", ":"))
-    url = http.build_url(f"{TRPC_BASE}/{procedure}", params={"input": payload})
-    headers = _merge_headers(cookie_header=cookie_header)
-    return await http.get(url, headers=headers, http2=False)
+    u = url.build(f"{TRPC_BASE}/{procedure}", params={"input": payload})
+    return await client.get(u, http2=False)
 
 
-async def _trpc_mutate(procedure: str, input_args: dict, *, cookie_header: str) -> dict:
+async def _trpc_mutate(procedure: str, input_args: dict) -> dict:
     """POST /api/trpc/<procedure> with {json: {...}} body."""
-    url = f"{TRPC_BASE}/{procedure}"
-    headers = _merge_headers(cookie_header=cookie_header, extra={"content-type": "application/json"})
-    return await http.post(url, json={"json": input_args}, headers=headers, http2=False)
+    u = f"{TRPC_BASE}/{procedure}"
+    return await client.post(u, json={"json": input_args}, http2=False)
 
 
 def _unwrap_trpc(resp: dict, *, procedure: str) -> dict:
@@ -264,11 +248,11 @@ def _unwrap_trpc(resp: dict, *, procedure: str) -> dict:
         raise RuntimeError(f"tRPC {procedure} unexpected envelope: {body!r}") from e
 
 
-async def _resolve_tenant_id(cookie_header: str, tenant_id: str | None = None) -> str:
+async def _resolve_tenant_id(tenant_id: str | None = None) -> str:
     """Return the tenant external id — provided, else from session."""
     if tenant_id:
         return tenant_id
-    session = await _require_session(cookie_header)
+    session = await _require_session()
     org = _org_from_session(session)
     tid = org.get("tenantExternalId")
     if not tid:
@@ -294,8 +278,7 @@ async def check_session(*, auth: dict = None, **params) -> dict:
     login landed here rather than elsewhere. Preserves the
     authenticated/identifier/display fields the Rust auth-bridge parses.
     """
-    cookies = (auth or {}).get("cookies", "")
-    session = await _get_session(cookies)
+    session = await _get_session()
     if not session:
         return {"authenticated": False}
     user = session.get("user", {}) or {}
@@ -338,8 +321,7 @@ async def list_members(*, tenant_external_id: str = None, query: str = "",
         page: Zero-indexed page.
         page_size: Rows per page (default 100).
     """
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     args: dict = {
         "tenantExternalId": tid,
         "query": query or "",
@@ -348,7 +330,7 @@ async def list_members(*, tenant_external_id: str = None, query: str = "",
     }
     if role:
         args["roles"] = [_normalize_role(role)]
-    resp = await _trpc_query("organization.searchPeople", args, cookie_header=cookies)
+    resp = await _trpc_query("organization.searchPeople", args)
     data = _unwrap_trpc(resp, procedure="organization.searchPeople")
     items = data.get("items") or []
     members = [it for it in items if (it.get("type") or "").lower() == "member"]
@@ -372,15 +354,14 @@ async def list_invites(*, tenant_external_id: str = None, query: str = "",
         page: Zero-indexed page.
         page_size: Rows per page (default 100).
     """
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     args: dict = {
         "tenantExternalId": tid,
         "query": query or "",
         "page": page,
         "pageSize": page_size,
     }
-    resp = await _trpc_query("organization.searchPeople", args, cookie_header=cookies)
+    resp = await _trpc_query("organization.searchPeople", args)
     data = _unwrap_trpc(resp, procedure="organization.searchPeople")
     items = data.get("items") or []
     invites = [it for it in items if (it.get("type") or "").lower() == "invite"
@@ -399,10 +380,9 @@ async def get_invite_link(*, tenant_external_id: str = None,
     Calls `invitation.getOrganizationInviteLink` and assembles the full URL
     using the captured template `{appUrl}/invitation?token={token}`.
     """
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     resp = await _trpc_query("invitation.getOrganizationInviteLink",
-                             {"tenantExternalId": tid}, cookie_header=cookies)
+                             {"tenantExternalId": tid})
     data = _unwrap_trpc(resp, procedure="invitation.getOrganizationInviteLink")
     token = data.get("token") or ""
     return {"__result__": {
@@ -424,11 +404,9 @@ async def create_invite_link(*, default_role: str = "MEMBER",
     Calls `invitation.createOrganizationInviteLink` — if a link already exists
     this rotates the token. Returns the new fully-qualified URL.
     """
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     args = {"tenantExternalId": tid, "defaultRole": _normalize_role(default_role)}
-    resp = await _trpc_mutate("invitation.createOrganizationInviteLink", args,
-                              cookie_header=cookies)
+    resp = await _trpc_mutate("invitation.createOrganizationInviteLink", args)
     data = _unwrap_trpc(resp, procedure="invitation.createOrganizationInviteLink")
     token = data.get("token") or ""
     return {"__result__": {
@@ -447,10 +425,9 @@ async def revoke_invite_link(*, tenant_external_id: str = None,
 
     Calls `invitation.revokeOrganizationInviteLink`.
     """
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     resp = await _trpc_mutate("invitation.revokeOrganizationInviteLink",
-                              {"tenantExternalId": tid}, cookie_header=cookies)
+                              {"tenantExternalId": tid})
     data = _unwrap_trpc(resp, procedure="invitation.revokeOrganizationInviteLink")
     return {"__result__": {
         "ok": True,
@@ -475,8 +452,7 @@ async def send_invite(*, email: str, role: str = "MEMBER",
     """
     if not email:
         raise ValueError("email is required")
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     clean_email = email.strip().lower()
     norm_role = _normalize_role(role)
     args = {
@@ -484,7 +460,7 @@ async def send_invite(*, email: str, role: str = "MEMBER",
         "email": clean_email,
         "role": norm_role,
     }
-    resp = await _trpc_mutate("invitation.create", args, cookie_header=cookies)
+    resp = await _trpc_mutate("invitation.create", args)
     _unwrap_trpc(resp, procedure="invitation.create")
     return {"__result__": {
         "id": clean_email,
@@ -514,14 +490,13 @@ async def update_role(*, email: str, role: str,
         raise ValueError("email is required")
     if not role:
         raise ValueError("role is required")
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     args = {
         "tenantExternalId": tid,
         "email": email.strip().lower(),
         "role": _normalize_role(role),
     }
-    resp = await _trpc_mutate("organization.setMemberRole", args, cookie_header=cookies)
+    resp = await _trpc_mutate("organization.setMemberRole", args)
     _unwrap_trpc(resp, procedure="organization.setMemberRole")
     return {"__result__": {
         "ok": True,
@@ -543,10 +518,9 @@ async def remove_member(*, email: str, tenant_external_id: str = None,
     """
     if not email:
         raise ValueError("email is required")
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     args = {"email": email.strip().lower(), "tenantExternalId": tid}
-    resp = await _trpc_mutate("organization.removeMember", args, cookie_header=cookies)
+    resp = await _trpc_mutate("organization.removeMember", args)
     _unwrap_trpc(resp, procedure="organization.removeMember")
     return {"__result__": {"ok": True, "email": args["email"]}}
 
@@ -562,10 +536,9 @@ async def revoke_invite(*, email: str, tenant_external_id: str = None,
     """
     if not email:
         raise ValueError("email is required")
-    cookies = (auth or {}).get("cookies", "")
-    tid = await _resolve_tenant_id(cookies, tenant_external_id)
+    tid = await _resolve_tenant_id(tenant_external_id)
     args = {"email": email.strip().lower(), "tenantExternalId": tid}
-    resp = await _trpc_mutate("invitation.revoke", args, cookie_header=cookies)
+    resp = await _trpc_mutate("invitation.revoke", args)
     _unwrap_trpc(resp, procedure="invitation.revoke")
     return {"__result__": {"ok": True, "email": args["email"]}}
 
@@ -590,24 +563,23 @@ async def probe(*, path: str, method: str = "GET", json_body: dict = None,
         extra_headers: Extra headers merged into the request.
         max_body: Body clip length (default 4000).
     """
-    cookies = (auth or {}).get("cookies", "")
-    url = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
-    headers = _merge_headers(cookie_header=cookies, extra=extra_headers or {})
+    u = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
+    headers = dict(extra_headers or {})
     method = (method or "GET").upper()
 
     if method == "GET":
-        resp = await http.get(url, headers=headers, http2=False)
+        resp = await client.get(u, headers=headers, http2=False)
     elif method == "POST":
-        resp = await http.post(url, json=json_body or {}, headers=headers, http2=False)
+        resp = await client.post(u, json=json_body or {}, headers=headers, http2=False)
     elif method == "PATCH":
-        resp = await http.patch(url, json=json_body or {}, headers=headers, http2=False)
+        resp = await client.patch(u, json=json_body or {}, headers=headers, http2=False)
     elif method == "DELETE":
         if json_body is not None:
-            resp = await http.delete(url, json=json_body, headers=headers, http2=False)
+            resp = await client.delete(u, json=json_body, headers=headers, http2=False)
         else:
-            resp = await http.delete(url, headers=headers, http2=False)
+            resp = await client.delete(u, headers=headers, http2=False)
     elif method == "PUT":
-        resp = await http.put(url, json=json_body or {}, headers=headers, http2=False)
+        resp = await client.put(u, json=json_body or {}, headers=headers, http2=False)
     else:
         return {"__result__": {"error": f"Unsupported method: {method}"}}
 
@@ -617,7 +589,7 @@ async def probe(*, path: str, method: str = "GET", json_body: dict = None,
 
     return {"__result__": {
         "status": resp.get("status"),
-        "url": url,
+        "u": u,
         "headers": {k: v for k, v in (resp.get("headers") or {}).items()
                     if k.lower() in ("content-type", "set-cookie", "location",
                                      "x-powered-by", "server", "cache-control")},
@@ -642,7 +614,6 @@ async def backend_probe(*, path: str, method: str = "GET", base: str = None,
         json_body: JSON body for writes.
         extra_headers: Extra headers.
     """
-    cookies = (auth or {}).get("cookies", "")
     session = await _require_session(cookies)
     user = session.get("user") or {}
     bearer = user.get("greptileToken") or ""
@@ -650,23 +621,22 @@ async def backend_probe(*, path: str, method: str = "GET", base: str = None,
         return {"__result__": {"error": "No greptileToken on session"}}
 
     base = base or "https://api.greptile.com"
-    url = path if path.startswith("http") else f"{base}{path}"
-    headers = dict(http.headers(accept="json").get("headers", {}))
-    headers["Authorization"] = f"Bearer {bearer}"
+    u = path if path.startswith("http") else f"{base}{path}"
+    headers = {"Authorization": f"Bearer {bearer}"}
     if extra_headers:
         headers.update(extra_headers)
 
     method = (method or "GET").upper()
     if method == "GET":
-        resp = await http.get(url, headers=headers)
+        resp = await client.get(u, headers=headers)
     elif method == "POST":
-        resp = await http.post(url, json=json_body or {}, headers=headers)
+        resp = await client.post(u, json=json_body or {}, headers=headers)
     elif method == "PATCH":
-        resp = await http.patch(url, json=json_body or {}, headers=headers)
+        resp = await client.patch(u, json=json_body or {}, headers=headers)
     elif method == "DELETE":
-        resp = await http.delete(url, headers=headers)
+        resp = await client.delete(u, headers=headers)
     elif method == "PUT":
-        resp = await http.put(url, json=json_body or {}, headers=headers)
+        resp = await client.put(u, json=json_body or {}, headers=headers)
     else:
         return {"__result__": {"error": f"Unsupported method: {method}"}}
 
@@ -676,7 +646,7 @@ async def backend_probe(*, path: str, method: str = "GET", base: str = None,
 
     return {"__result__": {
         "status": resp.get("status"),
-        "url": url,
+        "u": u,
         "headers": {k: v for k, v in (resp.get("headers") or {}).items()
                     if k.lower() in ("content-type", "set-cookie", "location",
                                      "x-powered-by", "server", "cache-control",
@@ -704,10 +674,8 @@ async def grep_bundle(*, path: str, patterns: list = None, context: int = 60,
         context: Chars of surrounding context to include per match (default 60).
         max_matches: Cap per pattern to keep results bounded.
     """
-    cookies = (auth or {}).get("cookies", "")
-    url = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
-    headers = _merge_headers(cookie_header=cookies)
-    resp = await http.get(url, headers=headers, http2=False)
+    u = path if path.startswith("http") else f"{DASHBOARD_BASE}{path}"
+    resp = await client.get(u, http2=False)
     body = resp.get("body") or ""
     if not isinstance(body, str):
         body = str(body)
@@ -745,7 +713,7 @@ async def grep_bundle(*, path: str, patterns: list = None, context: int = 60,
         out.append({"pattern": pat, "count": len(hits), "hits": hits})
 
     return {"__result__": {
-        "url": url,
+        "u": u,
         "status": resp.get("status"),
         "size": len(body),
         "matches": out,
@@ -770,12 +738,10 @@ async def grep_page_chunks(*, page: str, patterns: list = None, context: int = 8
         context: Surrounding chars included per hit.
         max_matches_per_pattern: Across all chunks combined.
     """
-    cookies = (auth or {}).get("cookies", "")
     page_url = page if page.startswith("http") else f"{DASHBOARD_BASE}{page}"
-    headers = _merge_headers(cookie_header=cookies)
 
     # 1. Fetch the HTML
-    html_resp = await http.get(page_url, headers=headers, http2=False)
+    html_resp = await client.get(page_url, http2=False)
     html = html_resp.get("body") or ""
     if not isinstance(html, str):
         html = str(html)
@@ -811,7 +777,7 @@ async def grep_page_chunks(*, page: str, patterns: list = None, context: int = 8
     for cpath in chunk_paths:
         curl = f"{DASHBOARD_BASE}{cpath}"
         try:
-            r = await http.get(curl, headers=headers, http2=False)
+            r = await client.get(curl, headers=headers, http2=False)
         except Exception as e:
             continue
         if r.get("status") != 200:

@@ -8,7 +8,7 @@ directly (no subprocess, no temp files, no jq).
 import glob
 import sys
 import json
-from agentos import http, provides, returns, test, web_read
+from agentos import provides, returns, test, web_read, client
 
 # Add yt-dlp's own site-packages to path (stable symlink, version-agnostic)
 _ytdlp_paths = glob.glob("/opt/homebrew/opt/yt-dlp/libexec/lib/python*/site-packages")
@@ -198,7 +198,7 @@ async def transcript_video(url: str, lang: str = "en", format: str = "text", **p
     cap_entry = next((c for c in captions if c.get("ext") == "json3"), captions[0])
     source_type = "auto_caption" if cap_entry in captions else "manual"
 
-    cap_resp = await http.get(cap_entry["url"], timeout=30.0)
+    cap_resp = await client.get(cap_entry["url"], timeout=30.0)
     cap_data = cap_resp["json"] if cap_resp.get("json") else json.loads(cap_resp["body"])
 
     events = [
@@ -276,7 +276,7 @@ async def get_channel(url: str, **params) -> dict:
 async def get_avatar_channel(url: str, **params) -> dict:
     """Quick fetch of channel avatar via og:image — ~1s."""
     from agentos import http
-    resp = await http.get(url, timeout=10)
+    resp = await client.get(url, timeout=10)
     html = resp["body"]
 
     import re

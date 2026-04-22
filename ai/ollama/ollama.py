@@ -17,7 +17,7 @@ import asyncio
 import time
 from pathlib import Path
 
-from agentos import connection, http, provides, returns, shell, test, timeout
+from agentos import connection, http, provides, returns, shell, test, timeout, client
 from agentos.tools import llm
 
 
@@ -65,21 +65,21 @@ def _connection_name(connection: dict | None) -> str:
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 async def _http_get(url: str, timeout: int = 10) -> dict:
-    resp = await http.get(url, **http.headers(accept="json"), timeout=timeout)
+    resp = await client.get(url, timeout=timeout)
     if not resp.get("ok"):
         raise RuntimeError(f"HTTP GET {url} failed: {resp.get('status', 0)}")
     return resp.get("json") or json.loads(resp.get("body", "{}"))
 
 
 async def _http_post(url: str, body: dict, timeout: int = 300) -> dict:
-    resp = await http.post(url, json=body, **http.headers(accept="json"), timeout=timeout)
+    resp = await client.post(url, json=body, timeout=timeout)
     if not resp.get("ok"):
         raise RuntimeError(f"HTTP POST {url} failed: {resp.get('status', 0)}")
     return resp.get("json") or json.loads(resp.get("body", "{}"))
 
 
 async def _http_delete(url: str, body: dict, timeout: int = 30) -> int:
-    resp = await http.delete(url, json=body, **http.headers(accept="json"), timeout=timeout)
+    resp = await client.delete(url, json=body, timeout=timeout)
     return resp.get("status", 0)
 
 

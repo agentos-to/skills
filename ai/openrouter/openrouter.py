@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 
-from agentos import connection, http, provides, returns, test
+from agentos import connection, http, provides, returns, test, client
 from agentos.tools import llm
 
 
@@ -46,7 +46,7 @@ def _ts_to_iso(ts) -> str | None:
 @connection("api")
 async def list_models(**params) -> list[dict]:
     """List available AI models from all providers via OpenRouter."""
-    resp = await http.get(f"{API_BASE}/models", **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.get(f"{API_BASE}/models", headers=_auth_header(params))
     results = []
     for m in (resp["json"] or {}).get("data", []):
         provider_slug = m.get("id", "").split("/")[0] if m.get("id") else None
@@ -121,8 +121,8 @@ async def chat(*, model: str, messages: list, tools: list = None, max_tokens: in
             for t in tools
         ]
 
-    resp = await http.post(f"{API_BASE}/chat/completions",
-                     json=body, **http.headers(accept="json", extra=_auth_header(params)))
+    resp = await client.post(f"{API_BASE}/chat/completions",
+                     json=body, headers=_auth_header(params))
     data = resp["json"]
     choices = data.get("choices") or [{}]
     choice = choices[0] if choices else {}

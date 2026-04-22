@@ -35,7 +35,7 @@ The dashboard UI masks it, but the API returns it in full.
 Key format: UUID (e.g. "5bcbb3da-e415-44f1-8e57-10e92177f378").
 """
 
-from agentos import claims, connection, http, provides, returns, test, timeout, web_read, web_search
+from agentos import claims, connection, http, provides, returns, test, timeout, web_read, web_search, client, url
 
 
 connection(
@@ -62,7 +62,7 @@ CALLBACK_URL = "https://dashboard.exa.ai/"
 
 async def _get_csrf_token() -> str:
     """Fetch CSRF token from NextAuth. The per-call jar captures the csrf cookie."""
-    resp = await http.get(f"{AUTH_BASE}/api/auth/csrf")
+    resp = await client.get(f"{AUTH_BASE}/api/auth/csrf")
     if not resp["ok"]:
         raise RuntimeError(f"CSRF fetch failed: HTTP {resp['status']}")
     return resp["json"]["csrfToken"]
@@ -70,7 +70,7 @@ async def _get_csrf_token() -> str:
 
 async def _send_verification_email(csrf_token: str, email: str) -> dict:
     """POST to NextAuth email signin endpoint to trigger the verification code email."""
-    resp = await http.post(
+    resp = await client.post(
         f"{AUTH_BASE}/api/auth/signin/email",
         data={
             "email": email,
@@ -87,7 +87,7 @@ async def _send_verification_email(csrf_token: str, email: str) -> dict:
 
 async def _check_session() -> dict | None:
     """Check the current session on the dashboard. Returns user data or None."""
-    resp = await http.get(f"{DASHBOARD_BASE}/api/auth/session")
+    resp = await client.get(f"{DASHBOARD_BASE}/api/auth/session")
     if resp["status"] != 200:
         return None
     data = resp["json"]
@@ -196,7 +196,7 @@ async def verify_login_code(*, email: str, code: str, **params) -> dict:
     await _get_csrf_token()
 
     # Verify the OTP — Exa's custom endpoint validates the 6-digit code
-    resp = await http.post(
+    resp = await client.post(
         f"{AUTH_BASE}/api/verify-otp",
         json={"email": email.lower(), "otp": code},
     )
@@ -216,7 +216,7 @@ async def verify_login_code(*, email: str, code: str, **params) -> dict:
     # Construct the token NextAuth expects: hashedOtp:rawOtp
     # NextAuth hashes this with SHA256+secret and compares to the DB entry.
     token = f"{hashed_otp}:{raw_otp}"
-    callback_url = http.build_url(
+    callback_url = url.build(
         f"{AUTH_BASE}/api/auth/callback/email",
         params={
             "email": email.lower(),
@@ -226,7 +226,7 @@ async def verify_login_code(*, email: str, code: str, **params) -> dict:
     )
 
     # Hit the NextAuth callback — this sets the session-token cookie
-    resp2 = await http.get(callback_url)
+    resp2 = await client.get(callback_url)
     if resp2["status"] >= 400:
         return {"__result__": {"error": f"Callback failed: HTTP {resp2['status']}"}}
 
@@ -298,7 +298,7 @@ async def store_session_cookies(*, email: str, session_token: str, cf_clearance:
     # onto the ambient jar for the duration of this call by overriding
     # `cookies_in` via a per-request `cookies=` kwarg the engine honors.
     cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
-    resp = await http.get(
+    resp = await client.get(
         f"{DASHBOARD_BASE}/api/auth/session",
         cookies=cookie_header,
     )
@@ -358,7 +358,7 @@ async def get_api_keys(*, store: bool = True, **params) -> dict:
     session = await _require_session()
     email = session["user"]["email"]
 
-    resp = await http.get(f"{DASHBOARD_BASE}/api/get-api-keys")
+    resp = await client.get(f"{DASHBOARD_BASE}/api/get-api-keys")
     data = resp["json"]
 
     keys = data.get("apiKeys", [])
@@ -405,7 +405,7 @@ async def get_api_keys(*, store: bool = True, **params) -> dict:
 async def get_teams(**params) -> dict:
     """Get team info including rate limits, credits, and usage from the dashboard."""
     await _require_session()
-    resp = await http.get(f"{DASHBOARD_BASE}/api/get-teams")
+    resp = await client.get(f"{DASHBOARD_BASE}/api/get-teams")
     data = resp["json"]
 
     teams = data.get("teams", [])
@@ -446,7 +446,7 @@ async def create_api_key(*, name: str = "agentOS", **params) -> dict:
     session = await _require_session()
     email = session["user"]["email"]
 
-    resp = await http.post(
+    resp = await client.post(
         f"{DASHBOARD_BASE}/api/create-api-key",
         json={"name": name},
     )
@@ -520,10 +520,9 @@ async def search(*, query: str, limit: int = 10, category: str = None, include_t
     if category:
         body["category"] = category
 
-    resp = await http.post(
+    resp = await client.post(
         f"{API_BASE}/search",
-        json=body,
-        **http.headers(accept="json", extra={"x-api-key": api_key}),
+        json=body, headers={"x-api-key": api_key},
     )
 
     return [_map_result(r) for r in (resp["json"] or {}).get("results", [])]
@@ -541,10 +540,9 @@ async def read_webpage(*, url: str, **params) -> dict:
         url: URL to extract content from
     """
     api_key = params.get("auth", {}).get("key", "")
-    resp = await http.post(
+    resp = await client.post(
         f"{API_BASE}/contents",
-        json={"urls": [url], "text": True},
-        **http.headers(accept="json", extra={"x-api-key": api_key}),
+        json={"urls": [url], "text": True}, headers={"x-api-key": api_key},
     )
 
     results = (resp["json"] or {}).get("results", [])
@@ -568,7 +566,7 @@ async def logout(**params) -> dict:
         return {"__result__": {"status": "already_logged_out"}}
 
     csrf_token = await _get_csrf_token()
-    await http.post(
+    await client.post(
         f"{AUTH_BASE}/api/auth/signout",
         data={"csrfToken": csrf_token},
         headers={"Content-Type": "application/x-www-form-urlencoded"},

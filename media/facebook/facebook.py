@@ -4,7 +4,7 @@ import re
 import shutil
 
 from lxml import html as lhtml
-from agentos import http, provides, returns, shell, test, timeout, web_read
+from agentos import provides, returns, shell, test, timeout, web_read, client
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -29,7 +29,7 @@ async def get_community(
     group_url = f"https://www.facebook.com/groups/{group_name}/"
 
     # Fetch the page
-    resp = await http.get(group_url, timeout=30.0)
+    resp = await client.get(group_url, timeout=30.0)
 
     html = resp["body"]
     if not html:

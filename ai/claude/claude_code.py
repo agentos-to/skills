@@ -13,14 +13,14 @@ Two responsibilities:
 
 Both responsibilities use the `cli` connection.
 
-Routes HTTP through shell.run() / http.get() so the engine logs and audits
+Routes HTTP through shell.run() / client.get() so the engine logs and audits
 every invocation.
 """
 
 import json
 from pathlib import Path
 
-from agentos import http, shell, returns, timeout, connection, provides
+from agentos import http, shell, returns, timeout, connection, provides, client
 from agentos.macos import keychain
 from agentos.tools import llm
 
@@ -131,10 +131,9 @@ async def list_models_cli(**params) -> list:
     """
     token = await _read_oauth_token()
     headers = {"x-api-key": token, "anthropic-version": ANTHROPIC_VERSION}
-    resp = await http.get(
+    resp = await client.get(
         f"{API_BASE}/models",
-        params={"limit": "100"},
-        **http.headers(accept="json", extra=headers),
+        params={"limit": "100"}, headers=headers,
     )
     data = resp["json"] or {}
     return [_map_model(m) for m in data.get("data", [])]

@@ -28,7 +28,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agentos import http, connection, provides, returns, test, timeout, web_read
+from agentos import http, connection, provides, returns, test, timeout, web_read, client
 
 
 connection(
@@ -91,9 +91,9 @@ def _get_token(con: dict | None = None) -> str:
 
 async def _api_post(token: str, endpoint: str, body: dict, con: dict | None = None) -> object:
     url = f"{_api_base(con)}{endpoint}"
-    resp = await http.post(url, json=body, **http.headers(accept="json", extra={
+    resp = await client.post(url, json=body, headers={
         "Authorization": f"Bearer {token}",
-    }))
+    })
     if not resp.get("ok"):
         status = resp.get("status", 0)
         if status == 401:

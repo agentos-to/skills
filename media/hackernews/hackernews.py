@@ -1,6 +1,6 @@
 """Hacker News — public Algolia API, no auth required."""
 
-from agentos import http, provides, returns, test, web_read, web_search
+from agentos import provides, returns, test, web_read, web_search, client
 
 BASE = "https://hn.algolia.com/api/v1"
 SITE = "https://news.ycombinator.com"
@@ -95,7 +95,7 @@ async def list_posts(feed: str = "front", limit: int = 30, **params) -> list[dic
     tag_map = {"new": "story", "ask": "ask_hn", "show": "show_hn"}
     tags = tag_map.get(feed, "front_page")
 
-    resp = await http.get(f"{BASE}/{endpoint}", params={
+    resp = await client.get(f"{BASE}/{endpoint}", params={
         "tags": tags,
         "hitsPerPage": str(limit),
     })
@@ -112,7 +112,7 @@ async def search_posts(query: str, limit: int = 30, **params) -> list[dict]:
         query: Search query
         limit: Number of results (max 100)
     """
-    resp = await http.get(f"{BASE}/search", params={
+    resp = await client.get(f"{BASE}/search", params={
         "query": query,
         "tags": "story",
         "hitsPerPage": str(limit),
@@ -140,7 +140,7 @@ async def get_post(id: str = None, url: str = None, **params) -> dict:
         from agentos import skill_error
         return skill_error("Either id or url with id= parameter is required")
 
-    resp = await http.get(f"{BASE}/items/{id}")
+    resp = await client.get(f"{BASE}/items/{id}")
 
     return _map_item(resp["json"])
 
@@ -152,7 +152,7 @@ async def comments_post(id: str, **params) -> list[dict]:
     Args:
         id: Story ID to get comments for
     """
-    resp = await http.get(f"{BASE}/items/{id}")
+    resp = await client.get(f"{BASE}/items/{id}")
 
     item = resp["json"]
     result = []

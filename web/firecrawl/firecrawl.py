@@ -1,6 +1,6 @@
 """Firecrawl — browser-rendered web scraping via API."""
 
-from agentos import http, connection, provides, returns, web_read
+from agentos import http, connection, provides, returns, web_read, client
 
 
 connection(
@@ -20,7 +20,7 @@ API_BASE = "https://api.firecrawl.dev/v1"
 async def read_webpage(*, url: str, wait_for_js: int = 0, timeout: int = 30000, **params) -> dict:
     """Read a URL with browser rendering (handles JS-heavy sites)."""
     api_key = params.get("auth", {}).get("key", "")
-    resp = await http.post(
+    resp = await client.post(
         f"{API_BASE}/scrape",
         json={
             "url": url,
@@ -28,8 +28,7 @@ async def read_webpage(*, url: str, wait_for_js: int = 0, timeout: int = 30000, 
             "onlyMainContent": True,
             "waitFor": wait_for_js,
             "timeout": timeout,
-        },
-        **http.headers(accept="json", extra={"Authorization": f"Bearer {api_key}"}),
+        }, headers={"Authorization": f"Bearer {api_key}"},
     )
     data = (resp["json"] or {}).get("data") or {}
     meta = data.get("metadata") or {}

@@ -1,4 +1,4 @@
-"""Google Contacts skill — People API via http.get/post/patch/delete.
+"""Google Contacts skill — People API via client.get/post/patch/delete.
 
 Auth token lives in params["auth"]["access_token"], injected by the engine
 from the Mimestream OAuth provider (googleapis.com / contacts scope).
@@ -6,7 +6,7 @@ from the Mimestream OAuth provider (googleapis.com / contacts scope).
 
 import re
 
-from agentos import connection, http, returns, test, timeout
+from agentos import connection, http, returns, test, timeout, client
 
 
 connection(
@@ -318,10 +318,9 @@ async def list_contacts(*, limit=100, page_token=None, **params):
     if page_token:
         query["pageToken"] = page_token
 
-    resp = await http.get(
+    resp = await client.get(
         f"{BASE_URL}/people/me/connections",
-        params=query,
-        **http.headers(accept="json", extra=headers),
+        params=query, headers=headers,
     )
     data = resp["json"]
     connections = data.get("connections", [])
@@ -336,10 +335,9 @@ async def get_contact(*, id, **params):
     headers = _auth_header(params)
     resource = id if id.startswith("people/") else f"people/{id}"
 
-    resp = await http.get(
+    resp = await client.get(
         f"{BASE_URL}/{resource}",
-        params={"personFields": PERSON_FIELDS},
-        **http.headers(accept="json", extra=headers),
+        params={"personFields": PERSON_FIELDS}, headers=headers,
     )
     return _map_person(resp["json"])
 
@@ -357,10 +355,9 @@ async def search_contacts(*, query, limit=30, **params):
         "pageSize": str(min(limit, 30)),
     }
 
-    resp = await http.get(
+    resp = await client.get(
         f"{BASE_URL}/people:searchContacts",
-        params=query_params,
-        **http.headers(accept="json", extra=headers),
+        params=query_params, headers=headers,
     )
     data = resp["json"]
     results = data.get("results", [])
@@ -381,11 +378,10 @@ async def create_contact(*, first_name=None, last_name=None, organization=None,
         addresses=addresses, urls=urls, birthday=birthday, notes=notes,
     )
 
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE_URL}/people:createContact",
         params={"personFields": PERSON_FIELDS},
-        json=body,
-        **http.headers(accept="json", extra=headers),
+        json=body, headers=headers,
     )
     return _map_person(resp["json"])
 
@@ -401,10 +397,9 @@ async def update_contact(*, id, first_name=None, last_name=None, organization=No
     resource = id if id.startswith("people/") else f"people/{id}"
 
     # Fetch current contact for etag (required by API)
-    current = await http.get(
+    current = await client.get(
         f"{BASE_URL}/{resource}",
-        params={"personFields": PERSON_FIELDS},
-        **http.headers(accept="json", extra=headers),
+        params={"personFields": PERSON_FIELDS}, headers=headers,
     )
     etag = current["json"].get("etag")
 
@@ -417,11 +412,10 @@ async def update_contact(*, id, first_name=None, last_name=None, organization=No
 
     mask = _update_person_fields(body)
 
-    resp = await http.patch(
+    resp = await client.patch(
         f"{BASE_URL}/{resource}:updateContact",
         params={"updatePersonFields": mask, "personFields": PERSON_FIELDS},
-        json=body,
-        **http.headers(accept="json", extra=headers),
+        json=body, headers=headers,
     )
     return _map_person(resp["json"])
 
@@ -434,8 +428,7 @@ async def delete_contact(*, id, **params):
     headers = _auth_header(params)
     resource = id if id.startswith("people/") else f"people/{id}"
 
-    await http.delete(
-        f"{BASE_URL}/{resource}:deleteContact",
-        **http.headers(accept="json", extra=headers),
+    await client.delete(
+        f"{BASE_URL}/{resource}:deleteContact", headers=headers,
     )
     return {"status": "deleted", "id": resource}

@@ -22,7 +22,7 @@ import json
 import os
 import sys
 
-from agentos import http, connection, returns, timeout
+from agentos import http, connection, returns, timeout, client
 
 
 connection(
@@ -59,7 +59,7 @@ async def list_websites(**params) -> list[dict]:
     """List all your published sites (requires authentication)"""
     token = params.get("auth", {}).get("key", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    resp = await http.get(f"{BASE_URL}/publishes", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/publishes", headers=headers)
     return [_map_website(w) for w in (resp["json"] or {}).get("publishes", [])]
 
 
@@ -73,7 +73,7 @@ async def delete_website(*, slug: str, **params) -> dict:
         """
     token = params.get("auth", {}).get("key", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    await http.delete(f"{BASE_URL}/publish/{slug}", **http.headers(accept="json", extra=headers))
+    await client.delete(f"{BASE_URL}/publish/{slug}", headers=headers)
     return {"success": True, "id": slug}
 
 
@@ -88,10 +88,9 @@ async def claim_website(*, slug: str, claim_token: str, **params) -> dict:
         """
     token = params.get("auth", {}).get("key", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    await http.post(
+    await client.post(
         f"{BASE_URL}/publish/{slug}/claim",
-        json={"claimToken": claim_token},
-        **http.headers(accept="json", extra=headers),
+        json={"claimToken": claim_token}, headers=headers,
     )
     return {"success": True, "slug": slug}
 
@@ -103,7 +102,7 @@ async def op_signup(*, email: str, **params) -> dict:
         Args:
             email: User's email address
         """
-    await http.post("https://here.now/api/auth/login", json={"email": email}, **http.headers(accept="json"))
+    await client.post("https://here.now/api/auth/login", json={"email": email})
     return {
         "sent": True,
         "message": (
@@ -136,31 +135,27 @@ async def patch_metadata(*, slug: str, title: str = None, description: str = Non
         viewer["description"] = description
     if viewer:
         body["viewer"] = viewer
-    await http.patch(
+    await client.patch(
         f"{BASE_URL}/publish/{slug}/metadata",
-        json=body, **http.headers(accept="json", extra=headers),
+        json=body, headers=headers,
     )
     return {"success": True}
 
 
 def _make_request(url, method="GET", body=None, headers=None, content_type="application/json"):
     headers = dict(headers or {})
+    kwargs: dict = {"headers": headers}
 
     if body is not None and isinstance(body, (dict, list)):
-        kwargs = http.headers(accept="json", extra=headers)
         kwargs["json"] = body
     elif body is not None:
-        # Raw bytes/string — pass as data with explicit content-type
         if isinstance(body, bytes):
             body = body.decode("utf-8", errors="replace")
         headers["Content-Type"] = content_type
-        kwargs = http.headers(accept="json", extra=headers)
         kwargs["data"] = body
-    else:
-        kwargs = http.headers(accept="json", extra=headers)
 
-    dispatch = {"GET": http.get, "POST": http.post, "PUT": http.put, "DELETE": http.delete, "PATCH": http.patch}
-    fn = dispatch.get(method, http.get)
+    dispatch = {"GET": client.get, "POST": client.post, "PUT": client.put, "DELETE": client.delete, "PATCH": client.patch}
+    fn = dispatch.get(method, client.get)
     resp = fn(url, **kwargs)
 
     if not resp.get("ok"):

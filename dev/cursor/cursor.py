@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agentos import http, shell, sql, returns, timeout
+from agentos import shell, sql, returns, timeout, url
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -370,9 +370,9 @@ def _parse_task_blob(blob_value):
             if term:
                 searches.append(term)
         elif "webFetchToolCall" in tc:
-            url = tc["webFetchToolCall"].get("args", {}).get("url", "")
-            if url:
-                urls_fetched.append(url)
+            u = tc["webFetchToolCall"].get("args", {}).get("u", "")
+            if u:
+                urls_fetched.append(u)
 
     for step in reversed(steps):
         if "assistantMessage" in step:
@@ -407,7 +407,7 @@ def _build_workspace_map():
                     data = json.load(f)
                 folder = data.get("folder", data.get("workspace", ""))
                 if folder.startswith("file:///"):
-                    folder = http.decode(folder[7:])
+                    folder = url.decode(folder[7:])
                 ws_map[d] = folder
             except (json.JSONDecodeError, IOError):
                 pass

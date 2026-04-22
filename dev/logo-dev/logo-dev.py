@@ -1,4 +1,4 @@
-from agentos import http, connection, returns, timeout
+from agentos import connection, returns, timeout, url
 
 
 connection(
@@ -29,8 +29,8 @@ async def logo_url(*, domain: str, size: int = 128, format: str = "png",
             theme: Theme (auto, light, dark)
         """
     token = params.get("auth", {}).get("key", "")
-    url = _base_url(domain, token, size, format) + f"&theme={theme}"
-    return {"url": url}
+    u = _base_url(domain, token, size, format) + f"&theme={theme}"
+    return {"u": u}
 
 
 @returns({"url": "string"})
@@ -62,7 +62,7 @@ async def name_url(*, name: str, size: int = 128, format: str = "png",
             format: Image format
         """
     token = params.get("auth", {}).get("key", "")
-    return {"url": _base_url(f"name:{http.encode(name)}", token, size, format)}
+    return {"url": _base_url(f"name:{url.encode(name)}", token, size, format)}
 
 
 @returns({"url": "string"})

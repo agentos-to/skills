@@ -3,9 +3,7 @@
 import re
 from datetime import datetime, timezone
 
-from agentos import http, provides, returns, test, web_read, web_search
-
-_H = http.headers(accept="json")
+from agentos import provides, returns, test, web_read, web_search, client
 
 
 def _ts(epoch: int | float | None) -> str | None:
@@ -60,7 +58,7 @@ def _map_community(d: dict) -> dict:
 
 
 async def _get_json(path: str, params: dict | None = None) -> dict:
-    resp = await http.get(f"https://www.reddit.com{path}", **_H, params=params)
+    resp = await client.get(f"https://www.reddit.com{path}", params=params)
     status = resp.get("status")
     if status == 403:
         raise RuntimeError("Reddit 403 — bot detection. See docs/specs/engine/http-header-passthrough.md")

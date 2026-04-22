@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from agentos import connection, http, returns, test
+from agentos import connection, returns, test, client
 
 connection("api",
     auth={"type": "api_key",
@@ -58,7 +58,7 @@ async def _discover_config(force: bool = False) -> dict:
     if _config_cache and not force:
         return _config_cache
 
-    html = await http.get(PORTAL_ORIGIN)
+    html = await client.get(PORTAL_ORIGIN)
     if html["status"] >= 400:
         raise RuntimeError(f"portal HTML fetch failed: {html['status']}")
     m = _RE_BUNDLE_URL.search(html["body"] or "")
@@ -66,7 +66,7 @@ async def _discover_config(force: bool = False) -> dict:
         raise RuntimeError("portal HTML has no app-*.js bundle reference")
     bundle_url = f"{PORTAL_ORIGIN}/assets/{m.group(1)}"
 
-    bundle = await http.get(bundle_url, headers={
+    bundle = await client.get(bundle_url, headers={
         "Referer": f"{PORTAL_ORIGIN}/",
         "Origin": PORTAL_ORIGIN,
     })
@@ -102,7 +102,7 @@ async def _mint_id_token(credentials: str) -> str:
         )
     email, password = credentials.split(":", 1)
     cfg = await _discover_config()
-    resp = await http.post(
+    resp = await client.post(
         COGNITO_ENDPOINT,
         json={
             "AuthFlow": "USER_PASSWORD_AUTH",
@@ -138,7 +138,7 @@ def _widgets_headers(widgets_key: str) -> dict:
 
 async def _authed_get(params: dict, path: str, query: dict | None = None) -> dict:
     token = await _mint_id_token(params.get("auth", {}).get("key", ""))
-    resp = await http.get(f"{PORTAL_API}{path}", headers=_portal_headers(token), params=query)
+    resp = await client.get(f"{PORTAL_API}{path}", headers=_portal_headers(token), params=query)
     if resp["status"] >= 400:
         raise RuntimeError(f"GET {path} -> {resp['status']}: {(resp.get('body') or '')[:200]}")
     return resp["json"]
@@ -146,7 +146,7 @@ async def _authed_get(params: dict, path: str, query: dict | None = None) -> dic
 
 async def _current_customer_id(params: dict, token: str) -> int:
     """Portal endpoint that returns the authenticated user profile."""
-    resp = await http.get(f"{PORTAL_API}/customers", headers=_portal_headers(token))
+    resp = await client.get(f"{PORTAL_API}/customers", headers=_portal_headers(token))
     if resp["status"] >= 400:
         raise RuntimeError(f"GET /customers -> {resp['status']}")
     return int(resp["json"]["id"])
@@ -160,7 +160,7 @@ async def _active_membership_id(token: str) -> int | None:
     "Pass or Membership required" error. We pick the first active row;
     users with multiple actives will want a per-class pick UX eventually.
     """
-    resp = await http.get(f"{PORTAL_API}/customers/memberships", headers=_portal_headers(token))
+    resp = await client.get(f"{PORTAL_API}/customers/memberships", headers=_portal_headers(token))
     if resp["status"] >= 400:
         return None
     for m in resp["json"] or []:
@@ -252,7 +252,7 @@ async def get_locations(**params) -> list[dict]:
     typed so "what gyms are there?" works cross-skill.
     """
     cfg = await _discover_config()
-    resp = await http.get(f"{WIDGETS_API}/locations", headers=_widgets_headers(cfg["widgetsApiKey"]))
+    resp = await client.get(f"{WIDGETS_API}/locations", headers=_widgets_headers(cfg["widgetsApiKey"]))
     if resp["status"] >= 400:
         raise RuntimeError(f"/locations -> {resp['status']}")
     # Tilefive returns {"data": [...]} or raw [...]; handle both
@@ -287,7 +287,7 @@ async def get_schedule(
 
     start_dt, end_dt = _austin_day_window_utc(date, days=int(days))
     cfg = await _discover_config()
-    resp = await http.get(
+    resp = await client.get(
         f"{WIDGETS_API}/cal",
         headers=_widgets_headers(cfg["widgetsApiKey"]),
         params={
@@ -331,7 +331,7 @@ async def book_class(
                 "message": "No active membership or pass — purchase one at "
                 "https://boulderingproject.portal.approach.app/ to book classes.",
             }
-    resp = await http.post(
+    resp = await client.post(
         f"{PORTAL_API}/bookings/{int(booking_instance_id)}/customers",
         headers=_portal_headers(token),
         json={
@@ -360,7 +360,7 @@ async def book_class(
 async def cancel_booking(booking_instance_id: int, reservation_id: int, **params) -> dict:
     """Cancel a class reservation (reservation_id comes from book_class result or get_my_bookings)."""
     token = await _mint_id_token(params.get("auth", {}).get("key", ""))
-    resp = await http.delete(
+    resp = await client.delete(
         f"{PORTAL_API}/bookings/{int(booking_instance_id)}/reservations/{int(reservation_id)}",
         headers=_portal_headers(token),
     )

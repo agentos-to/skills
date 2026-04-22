@@ -1,4 +1,4 @@
-"""Google Calendar skill — all operations via http.get/post/patch/delete.
+"""Google Calendar skill — all operations via client.get/post/patch/delete.
 
 Auth token lives in params["auth"]["access_token"], injected by the engine
 from the Mimestream OAuth provider (googleapis.com / calendar.events scope).
@@ -8,7 +8,7 @@ import base64
 import re
 from datetime import datetime, timedelta, timezone
 
-from agentos import connection, http, provides, returns, test, timeout, web_read
+from agentos import connection, http, provides, returns, test, timeout, web_read, client, url
 
 connection(
     'api',
@@ -321,7 +321,7 @@ def _extract_event_id_from_url(url):
     """
     if not url:
         return None
-    parsed = http.parse_url(url)
+    parsed = url.parse(url)
     eid = parsed.query.get("eid")
     if eid:
         try:
@@ -347,7 +347,7 @@ def _extract_event_id_from_url(url):
 async def list_calendars(*, account=None, **params):
     """List all calendars the user can see."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/users/me/calendarList", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/users/me/calendarList", headers=headers)
     items = (resp["json"] or {}).get("items", [])
     gcal_product = {"shape": "product", "url": "https://calendar.google.com", "name": "Google Calendar"}
     return [
@@ -394,9 +394,9 @@ async def list_events(*, calendar_id="primary", days=7, past=False,
     if page_token:
         query_params["pageToken"] = page_token
 
-    resp = await http.get(
+    resp = await client.get(
         f"{BASE_URL}/calendars/{calendar_id}/events",
-        params=query_params, **http.headers(accept="json", extra=headers),
+        params=query_params, headers=headers,
     )
     data = resp["json"] or {}
     events = [_map_event(e) for e in data.get("items", [])]
@@ -420,9 +420,8 @@ async def get_event(*, id=None, url=None, calendar_id="primary", **params):
         raise ValueError("Either id or url is required")
 
     headers = _auth_header(params)
-    resp = await http.get(
-        f"{BASE_URL}/calendars/{calendar_id}/events/{id}",
-        **http.headers(accept="json", extra=headers),
+    resp = await client.get(
+        f"{BASE_URL}/calendars/{calendar_id}/events/{id}", headers=headers,
     )
     return _map_event(resp["json"])
 
@@ -475,13 +474,13 @@ async def create_event(*, title, start, end=None, all_day=None, calendar_id="pri
             }
         }
 
-    url = f"{BASE_URL}/calendars/{calendar_id}/events"
+    u = f"{BASE_URL}/calendars/{calendar_id}/events"
     if meet:
-        url += "?conferenceDataVersion=1"
+        u += "?conferenceDataVersion=1"
 
-    resp = await http.post(
-        url,
-        json=body, **http.headers(accept="json", extra=headers),
+    resp = await client.post(
+        u,
+        json=body, headers=headers,
     )
     return _map_event(resp["json"])
 
@@ -509,9 +508,9 @@ async def update_event(*, id, calendar_id="primary", title=None, start=None, end
     if attendees is not None:
         body["attendees"] = [{"email": e} for e in attendees]
 
-    resp = await http.patch(
+    resp = await client.patch(
         f"{BASE_URL}/calendars/{calendar_id}/events/{id}",
-        json=body, **http.headers(accept="json", extra=headers),
+        json=body, headers=headers,
     )
     return _map_event(resp["json"])
 
@@ -535,9 +534,8 @@ async def search_events(*, calendar_id="primary", days=30, past=False,
 async def delete_event(*, id, calendar_id="primary", **params):
     """Delete a calendar event."""
     headers = _auth_header(params)
-    await http.delete(
-        f"{BASE_URL}/calendars/{calendar_id}/events/{id}",
-        **http.headers(accept="json", extra=headers),
+    await client.delete(
+        f"{BASE_URL}/calendars/{calendar_id}/events/{id}", headers=headers,
     )
     return {"status": "deleted"}
 

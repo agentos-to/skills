@@ -1,4 +1,4 @@
-"""Gmail skill — all operations implemented via http.get()/http.post()/etc.
+"""Gmail skill — all operations implemented via client.get()/client.post()/etc.
 
 All public functions take **params. Auth token lives in
 params["auth"]["access_token"], injected by the engine from OAuth resolution.
@@ -12,7 +12,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from agentos import http, connection, provides, returns, timeout, web_read
+from agentos import http, connection, provides, returns, timeout, web_read, client
 
 connection(
     'gmail',
@@ -506,7 +506,7 @@ async def list_email_stubs(*, query="", limit=20, label_ids=None, page_token=Non
     if page_token:
         query_params["pageToken"] = page_token
 
-    resp = await http.get(f"{BASE_URL}/messages", params=query_params, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/messages", params=query_params, headers=headers)
     return resp["json"].get("messages", [])
 
 
@@ -522,7 +522,7 @@ async def get_email(*, id=None, url=None, **params):
         id = [seg for seg in fragment.split("/") if seg][-1]
 
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/messages/{id}", params={"format": "full"}, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/messages/{id}", params={"format": "full"}, headers=headers)
     return _map_email(resp["json"])
 
 
@@ -563,7 +563,7 @@ async def list_conversations(*, query="", label_ids=None, limit=20, page_token=N
     if page_token:
         query_params["pageToken"] = page_token
 
-    resp = await http.get(f"{BASE_URL}/threads", params=query_params, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/threads", params=query_params, headers=headers)
     threads = resp["json"].get("threads", [])
     # Threads from list API only have id/snippet/historyId — map what's available
     return [_map_conversation(t) for t in threads]
@@ -574,7 +574,7 @@ async def list_conversations(*, query="", label_ids=None, limit=20, page_token=N
 async def get_conversation(*, id, **params):
     """Get a full email thread with all messages, headers, and body content."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/threads/{id}", params={"format": "full"}, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/threads/{id}", params={"format": "full"}, headers=headers)
     return _map_conversation(resp["json"])
 
 
@@ -584,7 +584,7 @@ async def get_conversation(*, id, **params):
 async def get_profile(**params):
     """Get Gmail account profile (email address, message count, history ID)."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/profile", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/profile", headers=headers)
     return resp["json"]
 
 
@@ -604,7 +604,7 @@ def _map_label(label):
 async def list_labels(**params):
     """List all Gmail labels (system and user-created) as tags."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/labels", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/labels", headers=headers)
     return [_map_label(l) for l in resp["json"].get("labels", [])]
 
 
@@ -613,9 +613,8 @@ async def list_labels(**params):
 async def get_attachment(*, message_id, attachment_id, **params):
     """Download an email attachment as a file with base64url-encoded content."""
     headers = _auth_header(params)
-    resp = await http.get(
-        f"{BASE_URL}/messages/{message_id}/attachments/{attachment_id}",
-        **http.headers(accept="json", extra=headers),
+    resp = await client.get(
+        f"{BASE_URL}/messages/{message_id}/attachments/{attachment_id}", headers=headers,
     )
     data = resp["json"]
     return {
@@ -632,7 +631,7 @@ async def get_attachment(*, message_id, attachment_id, **params):
 async def get_raw(*, id, **params):
     """Get the full RFC 2822 raw source of an email (base64url-encoded)."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/messages/{id}", params={"format": "raw"}, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/messages/{id}", params={"format": "raw"}, headers=headers)
     return resp["json"]
 
 
@@ -650,7 +649,7 @@ async def get_history(*, start_history_id, label_id=None, history_types=None,
     if page_token:
         query_params["pageToken"] = page_token
 
-    resp = await http.get(f"{BASE_URL}/history", params=query_params, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/history", params=query_params, headers=headers)
     return resp["json"]
 
 
@@ -660,7 +659,7 @@ async def get_history(*, start_history_id, label_id=None, history_types=None,
 async def get_vacation(**params):
     """Get vacation/auto-reply settings."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/settings/vacation", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/settings/vacation", headers=headers)
     return resp["json"]
 
 
@@ -675,7 +674,7 @@ async def list_drafts(*, query="", limit=20, page_token=None, **params):
     if page_token:
         query_params["pageToken"] = page_token
 
-    resp = await http.get(f"{BASE_URL}/drafts", params=query_params, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/drafts", params=query_params, headers=headers)
     stubs = resp["json"].get("drafts", [])
     if not stubs:
         return []
@@ -687,7 +686,7 @@ async def list_drafts(*, query="", limit=20, page_token=None, **params):
 async def get_draft(*, id, **params):
     """Get a draft with full message content, mapped to the email shape."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/drafts/{id}", params={"format": "full"}, **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/drafts/{id}", params={"format": "full"}, headers=headers)
     draft = resp["json"]
     email = _map_email(draft.get("message", {}))
     if email:
@@ -701,7 +700,7 @@ async def get_draft(*, id, **params):
 async def list_filters(**params):
     """List all server-side email filters/rules."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/settings/filters", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/settings/filters", headers=headers)
     return resp["json"].get("filter", [])
 
 
@@ -711,7 +710,7 @@ async def list_filters(**params):
 async def list_send_as(**params):
     """List send-as aliases (email addresses you can send from)."""
     headers = _auth_header(params)
-    resp = await http.get(f"{BASE_URL}/settings/sendAs", **http.headers(accept="json", extra=headers))
+    resp = await client.get(f"{BASE_URL}/settings/sendAs", headers=headers)
     return resp["json"].get("sendAs", [])
 
 
@@ -749,7 +748,7 @@ async def unsubscribe_email(*, id, **params):
         }
 
     # RFC 8058: POST with form data List-Unsubscribe=One-Click
-    resp = await http.post(unsub_url, data={"List-Unsubscribe": "One-Click"})
+    resp = await client.post(unsub_url, data={"List-Unsubscribe": "One-Click"})
     status_code = resp.get("status", 0)
 
     return {
@@ -826,7 +825,7 @@ async def sync_unsubscribe(*, msg_id, thread_id, message_id_header="", label_ids
         2
     ]
 
-    resp = await http.post(
+    resp = await client.post(
         SYNC_BASE,
         params={"hl": "en", "c": "0", "rt": "r", "pt": "ji"},
         json=payload,
@@ -855,10 +854,9 @@ async def send_email(*, to, subject, body, html_body=None, cc=None, bcc=None, **
     """Send a new email (plain text or HTML)."""
     raw = _build_raw(to, subject, body, html_body=html_body, cc=cc, bcc=bcc)
     headers = _auth_header(params)
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE_URL}/messages/send",
-        json={"raw": raw},
-        **http.headers(accept="json", extra=headers),
+        json={"raw": raw}, headers=headers,
     )
     return _map_email(resp["json"])
 
@@ -874,10 +872,9 @@ async def reply_email(*, to, thread_id, in_reply_to, subject, body, html_body=No
         in_reply_to=in_reply_to, references=references,
     )
     headers = _auth_header(params)
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE_URL}/messages/send",
-        json={"raw": raw, "threadId": thread_id},
-        **http.headers(accept="json", extra=headers),
+        json={"raw": raw, "threadId": thread_id}, headers=headers,
     )
     return _map_email(resp["json"])
 
@@ -892,7 +889,7 @@ async def forward_email(*, to, subject, body, html_body=None, cc=None, bcc=None,
     payload = {"raw": raw}
     if thread_id:
         payload["threadId"] = thread_id
-    resp = await http.post(f"{BASE_URL}/messages/send", json=payload, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/messages/send", json=payload, headers=headers)
     return _map_email(resp["json"])
 
 
@@ -905,7 +902,7 @@ async def modify_email(*, id, add_labels=None, remove_labels=None, **params):
         "addLabelIds": add_labels or [],
         "removeLabelIds": remove_labels or [],
     }
-    resp = await http.post(f"{BASE_URL}/messages/{id}/modify", json=body, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/messages/{id}/modify", json=body, headers=headers)
     return _map_email(resp["json"])
 
 
@@ -914,7 +911,7 @@ async def modify_email(*, id, add_labels=None, remove_labels=None, **params):
 async def trash_email(*, id, **params):
     """Move an email to trash."""
     headers = _auth_header(params)
-    resp = await http.post(f"{BASE_URL}/messages/{id}/trash", **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/messages/{id}/trash", headers=headers)
     return _map_email(resp["json"])
 
 
@@ -923,7 +920,7 @@ async def trash_email(*, id, **params):
 async def untrash_email(*, id, **params):
     """Remove an email from trash."""
     headers = _auth_header(params)
-    resp = await http.post(f"{BASE_URL}/messages/{id}/untrash", **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/messages/{id}/untrash", headers=headers)
     return _map_email(resp["json"])
 
 
@@ -937,7 +934,7 @@ async def batch_modify_email(*, ids, add_labels=None, remove_labels=None, **para
         "addLabelIds": add_labels or [],
         "removeLabelIds": remove_labels or [],
     }
-    resp = await http.post(f"{BASE_URL}/messages/batchModify", json=body, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/messages/batchModify", json=body, headers=headers)
     # 204 No Content on success
     return {}
 
@@ -947,10 +944,9 @@ async def batch_modify_email(*, ids, add_labels=None, remove_labels=None, **para
 async def batch_delete_email(*, ids, **params):
     """Permanently delete multiple emails (max 1000 IDs). CANNOT BE UNDONE."""
     headers = _auth_header(params)
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE_URL}/messages/batchDelete",
-        json={"ids": ids},
-        **http.headers(accept="json", extra=headers),
+        json={"ids": ids}, headers=headers,
     )
     return {}
 
@@ -965,10 +961,9 @@ async def create_draft(*, to, subject, body, html_body=None, cc=None, bcc=None,
     message = {"raw": raw}
     if thread_id:
         message["threadId"] = thread_id
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE_URL}/drafts",
-        json={"message": message},
-        **http.headers(accept="json", extra=headers),
+        json={"message": message}, headers=headers,
     )
     draft = resp["json"]
     email = _map_email(draft.get("message", {}))
@@ -983,10 +978,9 @@ async def update_draft(*, id, to, subject, body, html_body=None, cc=None, bcc=No
     """Update an existing draft."""
     raw = _build_raw(to, subject, body, html_body=html_body, cc=cc, bcc=bcc)
     headers = _auth_header(params)
-    resp = await http.put(
+    resp = await client.put(
         f"{BASE_URL}/drafts/{id}",
-        json={"message": {"raw": raw}},
-        **http.headers(accept="json", extra=headers),
+        json={"message": {"raw": raw}}, headers=headers,
     )
     draft = resp["json"]
     email = _map_email(draft.get("message", {}))
@@ -1000,10 +994,9 @@ async def update_draft(*, id, to, subject, body, html_body=None, cc=None, bcc=No
 async def send_draft(*, id, **params):
     """Send an existing draft."""
     headers = _auth_header(params)
-    resp = await http.post(
+    resp = await client.post(
         f"{BASE_URL}/drafts/send",
-        json={"id": id},
-        **http.headers(accept="json", extra=headers),
+        json={"id": id}, headers=headers,
     )
     return _map_email(resp["json"])
 
@@ -1013,7 +1006,7 @@ async def send_draft(*, id, **params):
 async def delete_draft(*, id, **params):
     """Permanently delete a draft."""
     headers = _auth_header(params)
-    resp = await http.delete(f"{BASE_URL}/drafts/{id}", **http.headers(accept="json", extra=headers))
+    resp = await client.delete(f"{BASE_URL}/drafts/{id}", headers=headers)
     return {"status": "deleted"}
 
 
@@ -1038,7 +1031,7 @@ async def set_vacation(*, enabled, subject=None, body=None, html_body=None,
     if end_time is not None:
         payload["endTime"] = end_time
 
-    resp = await http.put(f"{BASE_URL}/settings/vacation", json=payload, **http.headers(accept="json", extra=headers))
+    resp = await client.put(f"{BASE_URL}/settings/vacation", json=payload, headers=headers)
     return resp["json"]
 
 
@@ -1053,7 +1046,7 @@ async def create_label(*, name, show_in_label_list=None, show_in_message_list=No
         "labelListVisibility": show_in_label_list or "labelShow",
         "messageListVisibility": show_in_message_list or "show",
     }
-    resp = await http.post(f"{BASE_URL}/labels", json=payload, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/labels", json=payload, headers=headers)
     return _map_label(resp["json"])
 
 
@@ -1071,7 +1064,7 @@ async def update_label(*, id, name=None, show_in_label_list=None, show_in_messag
     if show_in_message_list is not None:
         payload["messageListVisibility"] = show_in_message_list
 
-    resp = await http.patch(f"{BASE_URL}/labels/{id}", json=payload, **http.headers(accept="json", extra=headers))
+    resp = await client.patch(f"{BASE_URL}/labels/{id}", json=payload, headers=headers)
     return _map_label(resp["json"])
 
 
@@ -1081,7 +1074,7 @@ async def update_label(*, id, name=None, show_in_label_list=None, show_in_messag
 async def delete_label(*, id, **params):
     """Delete a Gmail label (does not delete emails, just removes the label)."""
     headers = _auth_header(params)
-    resp = await http.delete(f"{BASE_URL}/labels/{id}", **http.headers(accept="json", extra=headers))
+    resp = await client.delete(f"{BASE_URL}/labels/{id}", headers=headers)
     return {"status": "deleted"}
 
 
@@ -1113,7 +1106,7 @@ async def create_filter(*, from_addr=None, to=None, subject=None, query=None,
         action["forward"] = forward_to
 
     payload = {"criteria": criteria, "action": action}
-    resp = await http.post(f"{BASE_URL}/settings/filters", json=payload, **http.headers(accept="json", extra=headers))
+    resp = await client.post(f"{BASE_URL}/settings/filters", json=payload, headers=headers)
     return resp["json"]
 
 
@@ -1123,5 +1116,5 @@ async def create_filter(*, from_addr=None, to=None, subject=None, query=None,
 async def delete_filter(*, id, **params):
     """Delete a server-side email filter/rule."""
     headers = _auth_header(params)
-    resp = await http.delete(f"{BASE_URL}/settings/filters/{id}", **http.headers(accept="json", extra=headers))
+    resp = await client.delete(f"{BASE_URL}/settings/filters/{id}", headers=headers)
     return {"status": "deleted"}

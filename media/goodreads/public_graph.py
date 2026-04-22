@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from agentos import clean_html, connection, http, iso_from_ms, molt, parse_int, provides, returns, test, timeout, web_read
+from agentos import clean_html, client, connection, iso_from_ms, molt, parse_int, provides, returns, test, timeout, web_read
 
 
 USER_AGENT = "Mozilla/5.0 (compatible; AgentOS/1.0)"
@@ -18,27 +18,27 @@ APP_BUNDLE_RE = re.compile(r'/_next/static/chunks/pages/_app-[a-f0-9]+\.js')
 
 
 async def _fetch_html(url: str) -> str:
-    return await _fetch_url(url, extra_headers={"Cache-Control": "no-cache", "Pragma": "no-cache"}, accept="html")
+    return await _fetch_url(url, extra_headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
 
 
 async def _fetch_url(
     url: str,
     *,
     extra_headers: dict[str, str] | None = None,
-    accept: str = "any",
     json_body: dict[str, Any] | None = None,
 ) -> str:
+    """Fetch a Goodreads page. The ``graphql`` connection is
+    ``client="browser"``, so UA/Sec-Fetch-*/Accept-* come from the
+    ambient bundle; only caller-specific headers ride on ``headers=``.
+    Accept/Content-Type come from ``client.get/post``'s json= kwarg."""
     last_error = None
     is_post = json_body is not None
-    fn = http.post if is_post else http.get
+    fn = client.post if is_post else client.get
 
     for attempt in range(4):
-        header_kwargs = (
-            {"accept": "json", "extra": extra_headers}
-            if is_post
-            else {"waf": "cf", "mode": "navigate", "accept": accept, "extra": extra_headers}
-        )
-        kwargs = {**http.headers(**header_kwargs), "timeout": 30}
+        kwargs: dict = {"timeout": 30}
+        if extra_headers:
+            kwargs["headers"] = dict(extra_headers)
         if is_post:
             kwargs["json"] = json_body
         try:
@@ -283,8 +283,8 @@ async def _get_viewer(runtime: dict[str, Any], cookie_header: str) -> dict[str, 
 
 
 async def _load_book_page(book_id: str) -> dict[str, Any]:
-    url = f"{BASE_URL}/book/show/{book_id}"
-    html_text = await _fetch_html(url)
+    u = f"{BASE_URL}/book/show/{book_id}"
+    html_text = await _fetch_html(u)
     next_data = _extract_next_data(html_text)
     page_props = next_data.get("props", {}).get("pageProps", {}) or {}
     apollo = page_props.get("apolloState", {}) or {}
@@ -299,7 +299,7 @@ async def _load_book_page(book_id: str) -> dict[str, Any]:
     work_details = _deref(work, work.get("details") if work else None)
     work_stats = _deref(work, work.get("stats") if work else None)
     return {
-        "url": url,
+        "u": u,
         "html": html_text,
         "nextData": next_data,
         "pageProps": page_props,
@@ -936,9 +936,9 @@ def _p(d: dict | None, key: str, default: Any = None) -> Any:
 
 def _extract_id_from_url(params: dict | None, url_key: str, id_key: str, pattern: str) -> str | None:
     """Extract an ID from a URL param, falling back to the explicit ID param."""
-    url = _p(params, url_key)
-    if url:
-        m = re.search(pattern, url)
+    u = _p(params, url_key)
+    if u:
+        m = re.search(pattern, u)
         if m:
             return m.group(1)
     return _p(params, id_key)

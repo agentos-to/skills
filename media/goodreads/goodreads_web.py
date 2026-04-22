@@ -2,26 +2,29 @@
 """
 Authenticated Goodreads web scraping — friends, books, shelves, reviews, search people.
 
-Uses http.client + lxml for HTML parsing. Requires cookies via connection: web; AgentOS provides them.
+Uses lxml for HTML parsing. Cookies come from the ``web`` connection's
+ambient jar; AgentOS seeds it from a logged-in browser's cookies.
 Separate from public_graph.py which handles public GraphQL/Apollo data.
 """
 
 import re
 from typing import Any
 
-from agentos import claims, connection, email_lookup, get_cookies, http, molt, parse_date, parse_int, provides, returns, test, timeout
+from agentos import claims, client, connection, email_lookup, get_cookies, molt, parse_date, parse_int, provides, returns, test, timeout, url
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
 
 connection(
     'graphql',
-    description='Public AppSync GraphQL — API key auto-discovered from JS bundles')
+    description='Public AppSync GraphQL — API key auto-discovered from JS bundles',
+    client='browser')
 
 connection(
     'web',
     description='Goodreads user cookies for viewer-scoped data (friends, shelves, books, reviews)',
     base_url='https://www.goodreads.com',
+    client='browser',
     auth={'type': 'cookies', 'domain': '.goodreads.com', 'account': {'check': 'check_session'}},
     label='Goodreads Session',
     help_url='https://www.goodreads.com/user/sign_in',
@@ -32,10 +35,6 @@ BASE = "https://www.goodreads.com"
 MAX_PAGES = 20
 PER_PAGE_FRIENDS = 30
 PER_PAGE_BOOKS = 25
-
-# Goodreads is behind CloudFront — all requests need WAF headers.
-# mode="navigate" for top-level HTML pages — /review/list/ rejects cors/fetch.
-_H = http.headers(waf="cf", mode="navigate", accept="html")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,8 +59,8 @@ def _text(el: HtmlElement | None) -> str:
     return (el.text_content() or "").strip()
 
 
-async def _fetch(client, url: str) -> tuple[int, str]:
-    resp = await client.get(url, **_H)
+async def _fetch(target_url: str) -> tuple[int, str]:
+    resp = await client.get(target_url)
     return resp["status"], resp["body"]
 
 
@@ -149,7 +148,7 @@ async def check_session(**params) -> dict[str, Any]:
     if not cookie_header:
         return {"authenticated": False, "error": "no cookies"}
 
-    resp = await http.get(BASE, cookies=cookie_header, **_H)
+    resp = await client.get(BASE)
     if resp["status"] != 200:
         return {"authenticated": False, "statusCode": resp["status"]}
 
@@ -369,8 +368,8 @@ async def _get_person(
 ) -> dict[str, Any]:
     """Scrape a full Goodreads profile page and return rich person data."""
     cookie_header = cookie_header or get_cookies(params)
-    url = f"{BASE}/user/show/{user_id}"
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = f"{BASE}/user/show/{user_id}"
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Profile page returned {status}")
@@ -497,7 +496,7 @@ async def _get_person(
                         "id": bid,
                         "name": btitle,
                         "image": cover,
-                        "url": f"{BASE}/book/show/{bid}",
+                        "u": f"{BASE}/book/show/{bid}",
                     })
 
     # Currently reading — each .Updates div has a book + timestamp
@@ -528,7 +527,7 @@ async def _get_person(
                 entry: dict[str, Any] = {
                     "id": bid,
                     "name": btitle,
-                    "url": f"{BASE}/book/show/{bid}",
+                    "u": f"{BASE}/book/show/{bid}",
                     "dateAdded": date_added,
                 }
                 if author_name:
@@ -549,7 +548,7 @@ async def _get_person(
         "id": uid,
         "name": name,
         "image": photo_url,
-        "url": f"{BASE}/user/show/{uid}",
+        "u": f"{BASE}/user/show/{uid}",
         "gender": gender,
         "age": age,
         "birthday": birthday,
@@ -568,7 +567,7 @@ async def _get_person(
             "id": uid,
             "name": name,
             "handle": handle,
-            "url": f"{BASE}/user/show/{uid}",
+            "u": f"{BASE}/user/show/{uid}",
             "image": photo_url,
         }],
     }
@@ -716,7 +715,7 @@ async def _list_friends(
     cookie_header = _require_cookies(cookie_header, params, "list_friends")
 
     if page > 0:
-        resp = await http.get(f"{BASE}/friend/user/{user_id}?page={page}", cookies=cookie_header, **_H)
+        resp = await client.get(f"{BASE}/friend/user/{user_id}?page={page}")
         status, html_text = resp["status"], resp["body"]
         if status != 200:
             raise RuntimeError(f"Friends page returned {status}")
@@ -726,20 +725,19 @@ async def _list_friends(
     # Auto-paginate
     all_friends: list[dict[str, Any]] = []
     seen: set[str] = set()
-    async with http.client(cookies=cookie_header) as client:
-        for p in range(1, MAX_PAGES + 1):
-            status, html_text = await _fetch(client, f"{BASE}/friend/user/{user_id}?page={p}")
-            if status != 200:
-                break
-            if p == 1:
-                _require_login(html_text)
-            page_friends = _parse_friends_page(_parse(html_text), user_id)
-            for f in page_friends:
-                if f["id"] not in seen:
-                    seen.add(f["id"])
-                    all_friends.append(f)
-            if not page_friends or not _has_next(html_text):
-                break
+    for p in range(1, MAX_PAGES + 1):
+        status, html_text = await _fetch(f"{BASE}/friend/user/{user_id}?page={p}")
+        if status != 200:
+            break
+        if p == 1:
+            _require_login(html_text)
+        page_friends = _parse_friends_page(_parse(html_text), user_id)
+        for f in page_friends:
+            if f["id"] not in seen:
+                seen.add(f["id"])
+                all_friends.append(f)
+        if not page_friends or not _has_next(html_text):
+            break
 
     return all_friends
 
@@ -757,8 +755,8 @@ async def _search_people(
     params: dict | None = None,
 ) -> list[dict[str, Any]]:
     cookie_header = cookie_header or get_cookies(params)
-    url = http.build_url(f"{BASE}/search", params={"q": query, "search_type": "people"})
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = url.build(f"{BASE}/search", params={"q": query, "search_type": "people"})
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Search returned {status}")
@@ -779,7 +777,7 @@ async def _search_people(
         if not name or name.lower() in ("profile", "view profile", "compare books"):
             continue
         seen.add(uid)
-        results.append({"id": uid, "name": name, "url": f"{BASE}/user/show/{uid}"})
+        results.append({"id": uid, "name": name, "u": f"{BASE}/user/show/{uid}"})
         if len(results) >= limit:
             break
 
@@ -800,24 +798,24 @@ async def _resolve_email(
     """Look up Goodreads accounts by email address."""
     cookie_header = _require_cookies(cookie_header, params, "resolve_email")
 
-    async with http.client(cookies=cookie_header) as client:
-        # Step 1: load the find_friend page to get the CSRF token (n=)
-        status, form_html = await _fetch(client, f"{BASE}/friend/find_friend")
-        if status != 200:
-            raise RuntimeError(f"Find friend page returned {status}")
+        # Step 1: load the find_friend page to get the CSRF token (n=). The
+    # ambient Jar carries the CSRF session cookie into step 2.
+    status, form_html = await _fetch(f"{BASE}/friend/find_friend")
+    if status != 200:
+        raise RuntimeError(f"Find friend page returned {status}")
 
-        form_doc = _parse(form_html)
-        n_input = _first(form_doc, 'input[name="n"]')
-        n_token = n_input.get("value", "") if n_input else ""
+    form_doc = _parse(form_html)
+    n_input = _first(form_doc, 'input[name="n"]')
+    n_token = n_input.get("value", "") if n_input else ""
 
-        # Step 2: submit the search (cookie jar carries Set-Cookie from step 1)
-        search_url = http.build_url(
-            f"{BASE}/friend/find_friend",
-            params={"utf8": "\u2713", "n": n_token, "q": email},
-        )
-        status2, results_html = await _fetch(client, search_url)
-        if status2 != 200:
-            raise RuntimeError(f"Friend search returned {status2}")
+    # Step 2: submit the search.
+    search_url = url.build(
+        f"{BASE}/friend/find_friend",
+        params={"utf8": "✓", "n": n_token, "q": email},
+    )
+    status2, results_html = await _fetch(search_url)
+    if status2 != 200:
+        raise RuntimeError(f"Friend search returned {status2}")
 
     doc = _parse(results_html)
     table = _first(doc,"table.tableList")
@@ -892,8 +890,8 @@ async def _list_shelves(
     params: dict | None = None,
 ) -> list[dict[str, Any]]:
     cookie_header = cookie_header or get_cookies(params)
-    url = f"{BASE}/user/show/{user_id}"
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = f"{BASE}/user/show/{user_id}"
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Profile returned {status}")
@@ -921,7 +919,7 @@ async def _list_shelves(
             "id": f"{user_id}:{shelf_id}",
             "name": name or shelf_id,
             "bookCount": book_count,
-            "url": _abs_url(href),
+            "u": _abs_url(href),
         })
 
     return shelves
@@ -1101,14 +1099,13 @@ def _parse_book_rows(doc: HtmlElement, as_reviews: bool = False) -> list[dict[st
 
 
 async def _fetch_book_pages(
-    client,
     url_template: str,
     page: int,
     as_reviews: bool,
 ) -> list[dict[str, Any]]:
     """Fetch one or all pages from /review/list/ endpoint."""
     if page > 0:
-        status, html_text = await _fetch(client, url_template.format(page=page))
+        status, html_text = await _fetch(url_template.format(page=page))
         if status != 200:
             raise RuntimeError(f"Page returned {status}")
         _require_login(html_text)
@@ -1118,7 +1115,7 @@ async def _fetch_book_pages(
     all_items: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for p in range(1, MAX_PAGES + 1):
-        status, html_text = await _fetch(client, url_template.format(page=p))
+        status, html_text = await _fetch(url_template.format(page=p))
         if status != 200:
             break
         if p == 1:
@@ -1147,8 +1144,7 @@ async def _list_books(
     """List a user's books. page=0 fetches all pages."""
     cookie_header = _require_cookies(cookie_header, params, "list_books")
     url_tpl = f"{BASE}/review/list/{user_id}?shelf={shelf}&sort={sort}&page={{page}}&per_page={PER_PAGE_BOOKS}"
-    async with http.client(cookies=cookie_header) as client:
-        return await _fetch_book_pages(client, url_tpl, page, as_reviews=False)
+    return await _fetch_book_pages(url_tpl, page, as_reviews=False)
 
 
 async def _list_reviews(
@@ -1162,8 +1158,7 @@ async def _list_reviews(
     """List a user's reviews. page=0 fetches all pages."""
     cookie_header = _require_cookies(cookie_header, params, "list_reviews")
     url_tpl = f"{BASE}/review/list/{user_id}?shelf=all&sort={sort}&page={{page}}&per_page={PER_PAGE_BOOKS}"
-    async with http.client(cookies=cookie_header) as client:
-        return await _fetch_book_pages(client, url_tpl, page, as_reviews=True)
+    return await _fetch_book_pages(url_tpl, page, as_reviews=True)
 
 
 async def _list_shelf_books(
@@ -1177,8 +1172,7 @@ async def _list_shelf_books(
     """List books on a specific shelf. page=0 fetches all pages."""
     cookie_header = _require_cookies(cookie_header, params, "list_shelf_books")
     url_tpl = f"{BASE}/review/list/{user_id}?shelf={shelf_name}&page={{page}}&per_page={PER_PAGE_BOOKS}"
-    async with http.client(cookies=cookie_header) as client:
-        return await _fetch_book_pages(client, url_tpl, page, as_reviews=False)
+    return await _fetch_book_pages(url_tpl, page, as_reviews=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1193,8 +1187,8 @@ async def _list_groups(
 ) -> list[dict[str, Any]]:
     """List the authenticated user's groups."""
     cookie_header = _require_cookies(cookie_header, params, "list_groups")
-    url = f"{BASE}/group?tab=my_groups"
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = f"{BASE}/group?tab=my_groups"
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Groups page returned {status}")
@@ -1234,7 +1228,7 @@ async def _list_groups(
             "id": gid,
             "name": name,
             "image": image_url,
-            "url": _abs_url(f"/group/show/{gid}"),
+            "u": _abs_url(f"/group/show/{gid}"),
             "memberCount": members,
             "lastActive": last_active,
         })
@@ -1299,8 +1293,8 @@ async def _list_following(
 ) -> list[dict[str, Any]]:
     """List accounts (users + authors) the user is following."""
     cookie_header = cookie_header or get_cookies(params)
-    url = f"{BASE}/user/{user_id}/following"
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = f"{BASE}/user/{user_id}/following"
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Following page returned {status}")
@@ -1325,8 +1319,8 @@ async def _list_followers(
 ) -> list[dict[str, Any]]:
     """List accounts following the user."""
     cookie_header = cookie_header or get_cookies(params)
-    url = f"{BASE}/user/{user_id}/followers"
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = f"{BASE}/user/{user_id}/followers"
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Followers page returned {status}")
@@ -1356,8 +1350,8 @@ async def _list_quotes(
 ) -> list[dict[str, Any]]:
     """List a user's liked/saved quotes."""
     cookie_header = cookie_header or get_cookies(params)
-    url = f"{BASE}/quotes/list/{user_id}"
-    resp = await http.get(url, cookies=cookie_header, **_H)
+    u = f"{BASE}/quotes/list/{user_id}"
+    resp = await client.get(u)
     status, html_text = resp["status"], resp["body"]
     if status != 200:
         raise RuntimeError(f"Quotes page returned {status}")
@@ -1431,13 +1425,13 @@ async def _list_quotes(
                 quote["spokenBy"] = {
                     "id": author_id or author_name,
                     "name": author_name,
-                    "url": f"{BASE}/author/show/{author_id}" if author_id else None,
+                    "u": f"{BASE}/author/show/{author_id}" if author_id else None,
                 }
             if book_id:
                 quote["appearsIn"] = {
                     "id": book_id,
                     "name": book_title,
-                    "url": f"{BASE}/book/show/{book_id}",
+                    "u": f"{BASE}/book/show/{book_id}",
                 }
             quotes.append(quote)
 
