@@ -50,6 +50,7 @@ connection(
     'dashboard',
     base_url='https://dashboard.exa.ai',
     domain='exa.ai',
+    mode='browser',
     auth={'type': 'cookies', 'domain': '.exa.ai', 'names': ['next-auth.session-token'], 'account': {'check': 'check_session'}, 'login': [{'email_code': True}, {'sso': 'google'}]})
 
 
@@ -59,17 +60,17 @@ DASHBOARD_BASE = "https://dashboard.exa.ai"
 CALLBACK_URL = "https://dashboard.exa.ai/"
 
 
-async def _get_csrf_token(client) -> str:
-    """Fetch CSRF token from NextAuth. Sets the csrf cookie on the client."""
-    resp = await client.get(f"{AUTH_BASE}/api/auth/csrf")
+async def _get_csrf_token() -> str:
+    """Fetch CSRF token from NextAuth. The per-call jar captures the csrf cookie."""
+    resp = await http.get(f"{AUTH_BASE}/api/auth/csrf")
     if not resp["ok"]:
         raise RuntimeError(f"CSRF fetch failed: HTTP {resp['status']}")
     return resp["json"]["csrfToken"]
 
 
-async def _send_verification_email(client, csrf_token: str, email: str) -> dict:
+async def _send_verification_email(csrf_token: str, email: str) -> dict:
     """POST to NextAuth email signin endpoint to trigger the verification code email."""
-    resp = await client.post(
+    resp = await http.post(
         f"{AUTH_BASE}/api/auth/signin/email",
         data={
             "email": email,
@@ -84,9 +85,9 @@ async def _send_verification_email(client, csrf_token: str, email: str) -> dict:
     return resp["json"]
 
 
-async def _check_session(client) -> dict | None:
+async def _check_session() -> dict | None:
     """Check the current session on the dashboard. Returns user data or None."""
-    resp = await client.get(f"{DASHBOARD_BASE}/api/auth/session")
+    resp = await http.get(f"{DASHBOARD_BASE}/api/auth/session")
     if resp["status"] != 200:
         return None
     data = resp["json"]
@@ -123,11 +124,13 @@ _EXA = {"shape": "product", "url": "https://exa.ai", "name": "Exa"}
 @claims("primary_user")
 @connection("dashboard")
 @timeout(15)
-async def check_session(*, auth: dict = None, **params) -> dict:
-    """Verify Exa dashboard session and identify the logged-in account."""
-    cookies = (auth or {}).get("cookies", "")
-    async with _dashboard_client(cookies) as client:
-        session = await _check_session(client)
+async def check_session(**params) -> dict:
+    """Verify Exa dashboard session and identify the logged-in account.
+
+    Cookies come from the ambient per-call jar seeded by the engine from
+    the connection's credential row — skill code never threads them.
+    """
+    session = await _check_session()
     if not session:
         return {"authenticated": False}
     user = session.get("user", {})
@@ -155,9 +158,8 @@ async def send_login_code(*, email: str, **params) -> dict:
     if not email:
         return {"__result__": {"error": "email is required"}}
 
-    async with http.client(**http.headers(accept="json"), http2=False) as client:
-        csrf_token = await _get_csrf_token(client)
-        await _send_verification_email(client, csrf_token, email)
+    csrf_token = await _get_csrf_token()
+    await _send_verification_email(csrf_token, email)
 
     return {
         "__result__": {
@@ -188,60 +190,62 @@ async def verify_login_code(*, email: str, code: str, **params) -> dict:
     if not email or not code:
         return {"__result__": {"error": "email and code are required"}}
 
-    session_token = None
+    # Establish CSRF session (needed for the callback to accept our request).
+    # The per-call jar captures the csrf cookie automatically for the
+    # subsequent POSTs.
+    await _get_csrf_token()
 
-    async with http.client(**http.headers(accept="json"), http2=False) as client:
-        # Establish CSRF session (needed for the callback to accept our request)
-        await _get_csrf_token(client)
+    # Verify the OTP — Exa's custom endpoint validates the 6-digit code
+    resp = await http.post(
+        f"{AUTH_BASE}/api/verify-otp",
+        json={"email": email.lower(), "otp": code},
+    )
+    if resp["status"] != 200:
+        error_msg = "Invalid or expired verification code"
+        if resp.get("json"):
+            error_msg = resp["json"].get("error", error_msg)
+        return {"__result__": {"error": error_msg}}
 
-        # Verify the OTP — Exa's custom endpoint validates the 6-digit code
-        resp = await client.post(
-            f"{AUTH_BASE}/api/verify-otp",
-            json={"email": email.lower(), "otp": code},
-        )
-        if resp["status"] != 200:
-            error_msg = "Invalid or expired verification code"
-            if resp.get("json"):
-                error_msg = resp["json"].get("error", error_msg)
-            return {"__result__": {"error": error_msg}}
+    data = resp["json"]
+    hashed_otp = data.get("hashedOtp", "")
+    raw_otp = data.get("rawOtp", "")
 
-        data = resp["json"]
-        hashed_otp = data.get("hashedOtp", "")
-        raw_otp = data.get("rawOtp", "")
+    if not hashed_otp:
+        return {"__result__": {"error": "Unexpected verify-otp response", "raw": data}}
 
-        if not hashed_otp:
-            return {"__result__": {"error": "Unexpected verify-otp response", "raw": data}}
+    # Construct the token NextAuth expects: hashedOtp:rawOtp
+    # NextAuth hashes this with SHA256+secret and compares to the DB entry.
+    token = f"{hashed_otp}:{raw_otp}"
+    callback_url = http.build_url(
+        f"{AUTH_BASE}/api/auth/callback/email",
+        params={
+            "email": email.lower(),
+            "token": token,
+            "callbackUrl": CALLBACK_URL,
+        },
+    )
 
-        # Construct the token NextAuth expects: hashedOtp:rawOtp
-        # NextAuth hashes this with SHA256+secret and compares to the DB entry.
-        token = f"{hashed_otp}:{raw_otp}"
-        callback_url = http.build_url(
-            f"{AUTH_BASE}/api/auth/callback/email",
-            params={
-                "email": email.lower(),
-                "token": token,
-                "callbackUrl": CALLBACK_URL,
-            },
-        )
+    # Hit the NextAuth callback — this sets the session-token cookie
+    resp2 = await http.get(callback_url)
+    if resp2["status"] >= 400:
+        return {"__result__": {"error": f"Callback failed: HTTP {resp2['status']}"}}
 
-        # Hit the NextAuth callback — this sets the session-token cookie
-        resp2 = await client.get(callback_url)
-        if resp2["status"] >= 400:
-            return {"__result__": {"error": f"Callback failed: HTTP {resp2['status']}"}}
-
-        # Extract session token from Set-Cookie header
-        set_cookies = _extract_set_cookies(resp2)
-        session_token = set_cookies.get("next-auth.session-token")
+    # Extract session token from Set-Cookie header to persist via __secrets__.
+    # (The per-call jar also captured it, but there's no credential row yet
+    # for this email — __secrets__ is what creates the row.)
+    set_cookies = _extract_set_cookies(resp2)
+    session_token = set_cookies.get("next-auth.session-token")
 
     if not session_token:
         return {"__result__": {"error": "Login succeeded but no session token received"}}
 
-    # Validate session and store via __secrets__
+    # Validate the freshly minted session. The per-call jar already has the
+    # session-token cookie from the callback response.
+    session = await _check_session()
+    if not session:
+        return {"__result__": {"error": "Session token invalid after login"}}
+
     cookies = {"next-auth.session-token": session_token}
-    async with _dashboard_client(cookies) as dashboard:
-        session = await _check_session(dashboard)
-        if not session:
-            return {"__result__": {"error": "Session token invalid after login"}}
 
     return {
         "__secrets__": [{
@@ -288,10 +292,20 @@ async def store_session_cookies(*, email: str, session_token: str, cf_clearance:
     if cf_clearance:
         cookies["cf_clearance"] = cf_clearance
 
-    async with _dashboard_client(cookies) as client:
-        session = await _check_session(client)
-        if not session:
-            return {"__result__": {"error": "Session token invalid or expired"}}
+    # Validation uses the ambient per-call jar — but for THIS op the jar
+    # was seeded from whatever already-stored cookies existed (maybe none).
+    # The user-supplied session_token is what we're validating, so push it
+    # onto the ambient jar for the duration of this call by overriding
+    # `cookies_in` via a per-request `cookies=` kwarg the engine honors.
+    cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    resp = await http.get(
+        f"{DASHBOARD_BASE}/api/auth/session",
+        cookies=cookie_header,
+    )
+    session = resp["json"] if resp.get("status") == 200 else None
+    session = session if session and session.get("user") else None
+    if not session:
+        return {"__result__": {"error": "Session token invalid or expired"}}
 
     return {
         "__secrets__": [{
@@ -318,18 +332,9 @@ async def store_session_cookies(*, email: str, session_token: str, cf_clearance:
     }
 
 
-def _dashboard_client(cookies):
-    """HTTP session for dashboard.exa.ai (Vercel-hosted).
-
-    Uses http2=False because Vercel blocks HTTP/2 JA4 fingerprint.
-    http.headers(accept="json") adds Accept + Sec-CH-UA + Sec-Fetch headers.
-    """
-    return http.client(cookies=cookies, **http.headers(accept="json"), http2=False)
-
-
-async def _require_session(client) -> dict:
+async def _require_session() -> dict:
     """Check session and raise on failure so the engine's cookie retry fires."""
-    session = await _check_session(client)
+    session = await _check_session()
     if not session:
         raise Exception("Unauthorized (HTTP 403): Exa dashboard session expired or invalid")
     return session
@@ -338,7 +343,7 @@ async def _require_session(client) -> dict:
 @returns({"apiKeys": "array", "count": "integer"})
 @connection("dashboard")
 @timeout(15)
-async def get_api_keys(*, cookies: dict = None, store: bool = True, **params) -> dict:
+async def get_api_keys(*, store: bool = True, **params) -> dict:
     """List API keys from the Exa dashboard and optionally store the first enabled key.
 
     The `id` field in the API response IS the full API key value (UUID format).
@@ -348,20 +353,13 @@ async def get_api_keys(*, cookies: dict = None, store: bool = True, **params) ->
     so exa.search works immediately after.
 
     Args:
-        cookies: Dashboard session cookies (auto-injected by engine)
         store: Store the first enabled key as a credential (default True)
     """
-    if not cookies:
-        cookies = params.get("auth", {}).get("cookies")
-    if not cookies:
-        return {"__result__": {"error": "No dashboard cookies — run send_login_code + store_session_cookies first"}}
+    session = await _require_session()
+    email = session["user"]["email"]
 
-    async with _dashboard_client(cookies) as client:
-        session = await _require_session(client)
-        email = session["user"]["email"]
-
-        resp = await client.get(f"{DASHBOARD_BASE}/api/get-api-keys")
-        data = resp["json"]
+    resp = await http.get(f"{DASHBOARD_BASE}/api/get-api-keys")
+    data = resp["json"]
 
     keys = data.get("apiKeys", [])
     enabled_keys = [k for k in keys if k.get("enabled")]
@@ -404,21 +402,11 @@ async def get_api_keys(*, cookies: dict = None, store: bool = True, **params) ->
 @returns({"teams": "array", "count": "integer"})
 @connection("dashboard")
 @timeout(15)
-async def get_teams(*, cookies: dict = None, **params) -> dict:
-    """Get team info including rate limits, credits, and usage from the dashboard.
-
-    Args:
-        cookies: Dashboard session cookies (auto-injected by engine)
-    """
-    if not cookies:
-        cookies = params.get("auth", {}).get("cookies")
-    if not cookies:
-        return {"__result__": {"error": "No dashboard cookies — run send_login_code + store_session_cookies first"}}
-
-    async with _dashboard_client(cookies) as client:
-        await _require_session(client)
-        resp = await client.get(f"{DASHBOARD_BASE}/api/get-teams")
-        data = resp["json"]
+async def get_teams(**params) -> dict:
+    """Get team info including rate limits, credits, and usage from the dashboard."""
+    await _require_session()
+    resp = await http.get(f"{DASHBOARD_BASE}/api/get-teams")
+    data = resp["json"]
 
     teams = data.get("teams", [])
     return {
@@ -449,27 +437,20 @@ async def get_teams(*, cookies: dict = None, **params) -> dict:
 @returns({"status": "string", "keyName": "string", "domain": "string", "maskedKey": "string"})
 @connection("dashboard")
 @timeout(15)
-async def create_api_key(*, cookies: dict = None, name: str = "agentOS", **params) -> dict:
+async def create_api_key(*, name: str = "agentOS", **params) -> dict:
     """Create a new API key on the Exa dashboard and store it via __secrets__.
 
     Args:
-        cookies: Dashboard session cookies (auto-injected by engine)
         name: Name for the new API key (default "agentOS")
     """
-    if not cookies:
-        cookies = params.get("auth", {}).get("cookies")
-    if not cookies:
-        return {"__result__": {"error": "No dashboard cookies — run send_login_code + store_session_cookies first"}}
+    session = await _require_session()
+    email = session["user"]["email"]
 
-    async with _dashboard_client(cookies) as client:
-        session = await _require_session(client)
-        email = session["user"]["email"]
-
-        resp = await client.post(
-            f"{DASHBOARD_BASE}/api/create-api-key",
-            json={"name": name},
-        )
-        data = resp["json"]
+    resp = await http.post(
+        f"{DASHBOARD_BASE}/api/create-api-key",
+        json={"name": name},
+    )
+    data = resp["json"]
 
     key_obj = data.get("apiKey") or {}
     api_key = key_obj.get("id") if isinstance(key_obj, dict) else key_obj
@@ -575,27 +556,23 @@ async def read_webpage(*, url: str, **params) -> dict:
 @returns({"status": "string", "hint": "string"})
 @connection("dashboard")
 @timeout(10)
-async def logout(*, cookies: dict = None, **params) -> dict:
+async def logout(**params) -> dict:
     """Sign out of the Exa dashboard and invalidate the session.
 
     Hits NextAuth's signout endpoint to invalidate the server-side session,
     then returns a signal to clear the stored credentials.
-
-    Args:
-        cookies: Dashboard session cookies (auto-injected by engine)
     """
-    if not cookies:
-        cookies = params.get("auth", {}).get("cookies")
-    if not cookies:
+    # Skip the POST if there are no ambient cookies — nothing to sign out.
+    cookies_in = (params.get("auth") or {}).get("cookies") or ""
+    if not cookies_in:
         return {"__result__": {"status": "already_logged_out"}}
 
-    async with _dashboard_client(cookies) as client:
-        csrf_token = await _get_csrf_token(client)
-        resp = await client.post(
-            f"{AUTH_BASE}/api/auth/signout",
-            data={"csrfToken": csrf_token},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+    csrf_token = await _get_csrf_token()
+    await http.post(
+        f"{AUTH_BASE}/api/auth/signout",
+        data={"csrfToken": csrf_token},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
 
     return {
         "__result__": {
