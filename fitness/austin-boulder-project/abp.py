@@ -183,6 +183,7 @@ def _location_to_entity(loc: dict) -> dict:
     """Tilefive location → generic `place` shape."""
     return {
         "id": loc.get("id"),
+        "at": "austin-boulder-project",   # namespace so membership.location stubs resolve
         "name": loc.get("name") or loc.get("locationName") or f"ABP Location {loc.get('id')}",
         "street": loc.get("address1"),
         "city": loc.get("city"),
@@ -363,14 +364,36 @@ async def cancel_booking(booking_instance_id: int, reservation_id: int, **params
     return {"ok": True, "message": "Cancelled.", "result": resp.get("json")}
 
 
-def _membership_to_entity(m: dict) -> dict:
+def _email_from_credentials(params: dict) -> str | None:
+    """Extract the account email from the stored credential blob."""
+    key = params.get("auth", {}).get("key", "")
+    if key and ":" in key:
+        return key.split(":", 1)[0].strip()
+    return None
+
+
+def _account_stub(email: str | None) -> dict | None:
+    """Identity-stub for the account node — engine resolves by (at, identifier)."""
+    if not email:
+        return None
+    return {"at": "austin-boulder-project", "identifier": email}
+
+
+def _location_stub(location_id) -> dict | None:
+    """Identity-stub for an ABP location place node."""
+    if location_id is None:
+        return None
+    return {"at": "austin-boulder-project", "id": location_id}
+
+
+def _membership_to_entity(m: dict, email: str | None = None) -> dict:
     """Tilefive membership → generic `membership` shape."""
     mt = m.get("membershipType") or {}
     # Tilefive's `isRecurring` is 1/0; `billingType` is opaque (e.g. "DOP").
     # `durationType` (YEAR/MONTH/WEEK) is a cleaner standard cadence.
     cadence = (mt.get("durationType") or "").lower() or None
     cadence_map = {"year": "annual", "month": "monthly", "week": "weekly"}
-    return {
+    out = {
         "id": m["id"],
         "name": mt.get("name") or f"Membership {m['id']}",
         "tier": mt.get("name"),
@@ -386,13 +409,18 @@ def _membership_to_entity(m: dict) -> dict:
         "guestPassQuantity": m.get("guestPassQuantity"),
         "content": mt.get("description"),
     }
+    acct = _account_stub(email)
+    if acct: out["account"] = acct
+    loc = _location_stub(m.get("purchasedLocationId"))
+    if loc: out["location"] = loc
+    return out
 
 
-def _pass_to_entity(p: dict) -> dict:
+def _pass_to_entity(p: dict, email: str | None = None) -> dict:
     """Tilefive pass → generic `pass` shape."""
     pt = p.get("passType") or {}
     status = p.get("status") or ("depleted" if p.get("quantity") == 0 else "active")
-    return {
+    out = {
         "id": p["id"],
         "name": pt.get("name") or f"Pass {p['id']}",
         "status": status,
@@ -406,6 +434,11 @@ def _pass_to_entity(p: dict) -> dict:
         "price": p.get("price"),
         "currency": "USD",
     }
+    acct = _account_stub(email)
+    if acct: out["account"] = acct
+    loc = _location_stub(p.get("purchasedLocationId"))
+    if loc: out["location"] = loc
+    return out
 
 
 @test.skip(reason="needs credentials")
@@ -413,22 +446,22 @@ def _pass_to_entity(p: dict) -> dict:
 async def get_my_memberships(**params) -> list[dict]:
     """List memberships held by the logged-in account.
 
-    Returns generic `membership`-shaped entities so agents can ask
-    cross-skill questions like "what memberships do I have?"
+    Emitted memberships link to both the `account` (ABP login) and
+    the `location` (gym branch) so "what memberships do I have?" and
+    "which gym?" work cross-skill on the graph.
     """
+    email = _email_from_credentials(params)
     raw = await _authed_get(params, "/customers/memberships")
-    return [_membership_to_entity(m) for m in (raw or [])]
+    return [_membership_to_entity(m, email) for m in (raw or [])]
 
 
 @test.skip(reason="needs credentials")
 @returns("pass[]")
 async def get_my_passes(**params) -> list[dict]:
-    """List class passes held by the logged-in account.
-
-    Returns generic `pass`-shaped entities.
-    """
+    """List class passes held by the logged-in account."""
+    email = _email_from_credentials(params)
     raw = await _authed_get(params, "/customers/passes")
-    return [_pass_to_entity(p) for p in (raw or [])]
+    return [_pass_to_entity(p, email) for p in (raw or [])]
 
 
 @test.skip(reason="needs credentials")
