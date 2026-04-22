@@ -145,6 +145,23 @@ async def _current_customer_id(params: dict, token: str) -> int:
     return int(resp["json"]["id"])
 
 
+async def _active_membership_id(token: str) -> int | None:
+    """Find the active membership to bill a class reservation against.
+
+    Tilefive's booking endpoint needs an explicit `membershipId` — even if
+    the user has only one active membership, omitting it yields a cryptic
+    "Pass or Membership required" error. We pick the first active row;
+    users with multiple actives will want a per-class pick UX eventually.
+    """
+    resp = await http.get(f"{PORTAL_API}/customers/memberships", headers=_portal_headers(token))
+    if resp["status"] >= 400:
+        return None
+    for m in resp["json"] or []:
+        if m.get("isActive") and (m.get("status") or "").lower() == "active":
+            return int(m["id"])
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Entity helpers
 # ---------------------------------------------------------------------------
@@ -283,27 +300,51 @@ async def get_schedule(
 
 @test.skip(reason="destructive — actually books a class")
 @returns({"ok": "boolean", "message": "string"})
-async def book_class(booking_instance_id: int, num_guests: int = 0, **params) -> dict:
+async def book_class(
+    booking_instance_id: int,
+    num_guests: int = 0,
+    membership_id: int | None = None,
+    **params,
+) -> dict:
     """Book a class for the authenticated user.
 
-    Classes with `entranceRequirement="MP"` require an active membership
-    or pass; the server returns a friendly error when you don't have one.
+    The booking is billed against a specific membership. If the caller
+    doesn't pass `membership_id`, the skill looks up the user's first
+    active membership. Explicit override supported for multi-membership
+    users.
     """
     token = await _mint_id_token(params.get("auth", {}).get("key", ""))
     customer_id = await _current_customer_id(params, token)
+    if membership_id is None:
+        membership_id = await _active_membership_id(token)
+        if membership_id is None:
+            return {
+                "ok": False,
+                "message": "No active membership or pass — purchase one at "
+                "https://boulderingproject.portal.approach.app/ to book classes.",
+            }
     resp = await http.post(
         f"{PORTAL_API}/bookings/{int(booking_instance_id)}/customers",
         headers=_portal_headers(token),
-        json={"customerId": customer_id, "numGuests": int(num_guests)},
+        json={
+            "customerId": customer_id,
+            "numGuests": int(num_guests),
+            "membershipId": int(membership_id),
+        },
     )
     if resp["status"] >= 400:
         body = resp.get("body") or ""
-        # The server's error messages are well-shaped JSON — surface the
-        # `message` field cleanly when we can.
         j = resp.get("json") or {}
         msg = j.get("message") if isinstance(j, dict) else None
         return {"ok": False, "message": msg or f"HTTP {resp['status']}: {body[:200]}"}
-    return {"ok": True, "message": "Booked.", "result": resp["json"]}
+    j = resp.get("json") or {}
+    return {
+        "ok": True,
+        "message": f"Booked. reservation_id={j.get('id')}",
+        "reservation_id": j.get("id"),
+        "booking_instance_id": j.get("bookingId"),
+        "result": j,
+    }
 
 
 @test.skip(reason="destructive — cancels a real reservation")
