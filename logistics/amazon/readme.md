@@ -16,6 +16,18 @@ product:
 
 Search products, get details, and access your Amazon account. No API keys — uses Amazon's public autocomplete API and browser session cookies.
 
+> **TODO — agent-driven login.** Today cold-start requires the user to
+> log into amazon.com in Brave manually so the cookie provider picks up
+> fresh cookies. A `login` tool mirroring ABP's pattern (1Password →
+> email+password → handshake → `__secrets__`) would close the cold-start
+> gap. Amazon's sign-in is a multi-step form POST with CSRF tokens
+> embedded in HTML between steps, plus TOTP on this account, so the
+> RE is more involved than ABP's Cognito single-handshake. Use
+> `agentos.browse.Session` (authoring-time CDP driver) + the
+> reverse-engineering skill at `skills/agents/reverse-engineering/`
+> when picking this up. See `docs/skills/adding-login.md` for the
+> recipe and `_roadmap/p1/plan.md § What's left` for the status.
+
 ## Features
 
 ### Product Search
