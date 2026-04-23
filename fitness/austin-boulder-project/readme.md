@@ -18,10 +18,22 @@ Built on the **Tilefive** platform (`approach.app`), authenticated via **AWS Cog
 
 No credentials needed to view the schedule — `get_schedule` is fully public.
 
-To book classes, add your ABP portal credentials in agentOS skill settings:
+To book classes, run the `login` tool once. Credentials are resolved in
+this order:
 
-- **Format:** `your@email.com:yourpassword`
-- **Where to get them:** [boulderingproject.portal.approach.app/login](https://boulderingproject.portal.approach.app/login)
+1. **Caller-supplied** — `run login '{"email":"...", "password":"..."}'`.
+2. **Credential providers** — an installed `@provides(login_credentials)`
+   skill matched on `.approach.app` (1Password, macOS Keychain, etc.).
+3. **`NeedsCredentials`** — structured error when neither path resolves,
+   telling the agent what domain and fields it needs.
+
+On success, the skill runs AWS Cognito `USER_PASSWORD_AUTH` and stashes
+`{email, password, idToken, refreshToken}` in the credential store.
+Authed tools (`book_class`, `get_my_memberships`, etc.) read the IdToken
+automatically from `params.auth` on subsequent calls.
+
+See `auth-notes.md` for the reverse-engineering notes on the Cognito +
+portal handshake.
 
 ## Locations
 

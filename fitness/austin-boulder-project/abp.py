@@ -4,25 +4,47 @@ Two connections:
   - public: https://widgets.api.prod.tilefive.com (unauth — schedule, locations)
   - portal: https://portal.api.prod.tilefive.com  (authed — bookings, memberships)
 
-Authed calls need a session token. The token is minted via AWS Cognito
-USER_PASSWORD_AUTH and sent as the Authorization header. Password lives
-in the credential store as "email:password"; tokens are minted fresh
-per invocation (cheap; Cognito responds in ~300ms). Refresh flow is
-internal — no SDK primitive needed.
+Authentication: the portal is a CloudFront-fronted static SPA that
+authenticates against AWS Cognito via `USER_PASSWORD_AUTH`. The `login`
+tool resolves `{email, password}` from a credential provider
+(`credentials.retrieve(".approach.app", required=["email","password"])`
+— 1Password or any other `@provides(login_credentials)` skill),
+runs the Cognito handshake, and persists the resulting `{email,
+password, idToken, refreshToken}` in the credential store via
+`__secrets__`. Authed tools read the IdToken off `params.auth`
+and send it as the `Authorization` header.
 """
 
 import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from typing import Any
 
-from agentos import connection, returns, test, client
+from agentos import (
+    claims,
+    client,
+    connection,
+    credentials,
+    normalize_email,
+    returns,
+    skill_error,
+    skill_secret,
+    test,
+)
 
-connection("api",
+connection("public",
+    description="Tilefive widgets API — locations, schedule. No auth.",
+    base_url="https://widgets.api.prod.tilefive.com",
+    client="api")
+
+connection("portal",
+    description="Tilefive portal API — bookings, memberships, passes.",
+    base_url="https://portal.api.prod.tilefive.com",
+    client="api",
     auth={"type": "api_key",
-          "header": {"Authorization": ".auth.key"}},
-    label="ABP credentials — enter as email:password",
-    help_url="https://boulderingproject.portal.approach.app/login",
-    optional=True)
+          "account": {"check": "check_session", "login": "login"}},
+    label="ABP Portal Session",
+    help_url="https://boulderingproject.portal.approach.app/login")
 
 AUSTIN_TZ_NAME = "America/Chicago"
 AUSTIN_TZ = ZoneInfo(AUSTIN_TZ_NAME)
@@ -90,24 +112,26 @@ async def _discover_config(force: bool = False) -> dict:
 # Authed token — USER_PASSWORD_AUTH gets IdToken, used as raw Authorization
 # ---------------------------------------------------------------------------
 
-async def _mint_id_token(credentials: str) -> str:
-    """Credential blob is 'email:password'. Returns a Cognito IdToken.
+async def _cognito_initiate_auth(email: str, password: str) -> dict:
+    """Run Cognito USER_PASSWORD_AUTH. Returns the full AuthenticationResult.
 
-    IdToken, not AccessToken — Tilefive's portal API checks IdToken directly.
+    Callers use `IdToken` as the portal bearer token and `RefreshToken`
+    to mint fresh IdTokens without re-prompting for the password. The
+    returned dict shape is Cognito's — `{IdToken, AccessToken,
+    RefreshToken, ExpiresIn, TokenType}`.
     """
-    if not credentials or ":" not in credentials:
-        raise ValueError(
-            "ABP credentials must be 'email:password'. Add via "
-            "`accountos call accounts '{\"action\":\"add_credential\",\"skill\":\"austin-boulder-project\",\"value\":\"EMAIL:PASSWORD\"}'`"
-        )
-    email, password = credentials.split(":", 1)
+    if not email or not password:
+        raise ValueError("email and password required for Cognito auth")
     cfg = await _discover_config()
     resp = await client.post(
         COGNITO_ENDPOINT,
         json={
             "AuthFlow": "USER_PASSWORD_AUTH",
             "ClientId": cfg["cognitoClientId"],
-            "AuthParameters": {"USERNAME": email.strip(), "PASSWORD": password.strip()},
+            "AuthParameters": {
+                "USERNAME": email.strip(),
+                "PASSWORD": password.strip(),
+            },
         },
         headers={
             "Content-Type": "application/x-amz-json-1.1",
@@ -115,8 +139,30 @@ async def _mint_id_token(credentials: str) -> str:
         },
     )
     if resp["status"] >= 400:
-        raise RuntimeError(f"Cognito login failed: {resp['status']} {(resp.get('body') or '')[:200]}")
-    return resp["json"]["AuthenticationResult"]["IdToken"]
+        raise RuntimeError(
+            f"Cognito login failed: {resp['status']} "
+            f"{(resp.get('body') or '')[:200]}"
+        )
+    return resp["json"]["AuthenticationResult"]
+
+
+def _id_token_from_params(params: dict) -> str:
+    """Read the IdToken the login tool persisted into the credential store.
+
+    The engine's api_key auth resolver splats the credential row's
+    `value` fields onto `params.auth`, so the `login` tool's
+    `{email, password, idToken, refreshToken}` blob becomes
+    `params.auth.idToken` etc.
+    """
+    auth = params.get("auth") or {}
+    token = auth.get("idToken")
+    if not token:
+        raise RuntimeError(
+            "No IdToken available — run the `login` tool first "
+            "(agentos call run '{\"skill\":\"austin-boulder-project\","
+            "\"tool\":\"login\"}')."
+        )
+    return token
 
 
 def _portal_headers(id_token: str) -> dict:
@@ -137,10 +183,16 @@ def _widgets_headers(widgets_key: str) -> dict:
 
 
 async def _authed_get(params: dict, path: str, query: dict | None = None) -> dict:
-    token = await _mint_id_token(params.get("auth", {}).get("key", ""))
-    resp = await client.get(f"{PORTAL_API}{path}", headers=_portal_headers(token), params=query)
+    token = _id_token_from_params(params)
+    resp = await client.get(
+        f"{PORTAL_API}{path}",
+        headers=_portal_headers(token),
+        params=query,
+    )
     if resp["status"] >= 400:
-        raise RuntimeError(f"GET {path} -> {resp['status']}: {(resp.get('body') or '')[:200]}")
+        raise RuntimeError(
+            f"GET {path} -> {resp['status']}: {(resp.get('body') or '')[:200]}"
+        )
     return resp["json"]
 
 
@@ -235,6 +287,7 @@ def _booking_to_entity(b: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @returns("void")
+@connection("public")
 async def public_authenticate(*, force: bool = False, **params) -> dict:
     """Force re-reading widgetsApiKey + Cognito config from the live bundle.
 
@@ -245,6 +298,7 @@ async def public_authenticate(*, force: bool = False, **params) -> dict:
 
 @test
 @returns("place[]")
+@connection("public")
 async def get_locations(**params) -> list[dict]:
     """List all Bouldering Project locations as place entities.
 
@@ -263,6 +317,7 @@ async def get_locations(**params) -> list[dict]:
 
 @test
 @returns("class[]")
+@connection("public")
 async def get_schedule(
     location_id: int = AUSTIN_SPRINGDALE_ID,
     activity_ids: str | list | None = None,
@@ -308,6 +363,7 @@ async def get_schedule(
 
 @test.skip(reason="destructive — actually books a class")
 @returns({"ok": "boolean", "message": "string"})
+@connection("portal")
 async def book_class(
     booking_instance_id: int,
     num_guests: int = 0,
@@ -321,7 +377,7 @@ async def book_class(
     active membership. Explicit override supported for multi-membership
     users.
     """
-    token = await _mint_id_token(params.get("auth", {}).get("key", ""))
+    token = _id_token_from_params(params)
     customer_id = await _current_customer_id(params, token)
     if membership_id is None:
         membership_id = await _active_membership_id(token)
@@ -357,9 +413,10 @@ async def book_class(
 
 @test.skip(reason="destructive — cancels a real reservation")
 @returns({"ok": "boolean", "message": "string"})
+@connection("portal")
 async def cancel_booking(booking_instance_id: int, reservation_id: int, **params) -> dict:
     """Cancel a class reservation (reservation_id comes from book_class result or get_my_bookings)."""
-    token = await _mint_id_token(params.get("auth", {}).get("key", ""))
+    token = _id_token_from_params(params)
     resp = await client.delete(
         f"{PORTAL_API}/bookings/{int(booking_instance_id)}/reservations/{int(reservation_id)}",
         headers=_portal_headers(token),
@@ -372,11 +429,15 @@ async def cancel_booking(booking_instance_id: int, reservation_id: int, **params
 
 
 def _email_from_credentials(params: dict) -> str | None:
-    """Extract the account email from the stored credential blob."""
-    key = params.get("auth", {}).get("key", "")
-    if key and ":" in key:
-        return key.split(":", 1)[0].strip()
-    return None
+    """Return the authed account's email.
+
+    After Phase 1, the engine splats the credential row's value fields
+    onto `params.auth`, so `params.auth.email` and
+    `params.auth.identifier` both hold the canonical email.
+    """
+    auth = params.get("auth") or {}
+    ident = auth.get("identifier") or auth.get("email")
+    return str(ident) if ident else None
 
 
 def _account_stub(email: str | None) -> dict | None:
@@ -450,6 +511,7 @@ def _pass_to_entity(p: dict, email: str | None = None) -> dict:
 
 @test.skip(reason="needs credentials")
 @returns("membership[]")
+@connection("portal")
 async def get_my_memberships(**params) -> list[dict]:
     """List memberships held by the logged-in account.
 
@@ -464,6 +526,7 @@ async def get_my_memberships(**params) -> list[dict]:
 
 @test.skip(reason="needs credentials")
 @returns("pass[]")
+@connection("portal")
 async def get_my_passes(**params) -> list[dict]:
     """List class passes held by the logged-in account."""
     email = _email_from_credentials(params)
@@ -473,6 +536,133 @@ async def get_my_passes(**params) -> list[dict]:
 
 @test.skip(reason="needs credentials")
 @returns({"items": "array"})
+@connection("portal")
 async def get_my_bookings(**params) -> list[dict]:
     """List the authenticated user's upcoming reservations."""
     return await _authed_get(params, "/customers/bookings")
+
+
+# ---------------------------------------------------------------------------
+# Identity — account.check + login
+# ---------------------------------------------------------------------------
+
+_ABP = {
+    "shape": "organization",
+    "name": "Austin Boulder Project",
+    "url": "https://austinboulderingproject.com",
+}
+
+
+@test.skip(reason="destructive or unsupported — migrated from yaml")
+@returns("account")
+@claims("primary_user")
+@connection("portal")
+async def check_session(**params) -> dict[str, Any]:
+    """Verify the portal session and return the authed identity.
+
+    Calls `/customers` on the portal API with the stored IdToken. The
+    response includes the Cognito subject plus the account email,
+    which we return as the canonical identifier.
+    """
+    auth = params.get("auth") or {}
+    token = auth.get("idToken")
+    if not token:
+        return {"authenticated": False}
+    resp = await client.get(
+        f"{PORTAL_API}/customers",
+        headers=_portal_headers(token),
+    )
+    if resp["status"] >= 400:
+        return {"authenticated": False}
+
+    customer = resp.get("json") or {}
+    email_raw = customer.get("email") or auth.get("email")
+    if not email_raw:
+        return {"authenticated": True, "at": _ABP}
+
+    canonical = normalize_email(email_raw)
+    result: dict[str, Any] = {
+        "authenticated": True,
+        "at": _ABP,
+        "identifier": canonical,
+        "email": canonical,
+    }
+    first = customer.get("firstName")
+    last = customer.get("lastName")
+    if first or last:
+        result["displayName"] = " ".join(p for p in (first, last) if p).strip()
+    cid = customer.get("id") or customer.get("cognitoId") or customer.get("subject")
+    if cid is not None:
+        result["userId"] = str(cid)
+    return result
+
+
+@returns({"status": "string", "identifier": "string"})
+@connection("public")
+async def login(*, email: str = "", password: str = "", **params) -> dict[str, Any]:
+    """Log in to the ABP portal and persist a session for reuse.
+
+    Credential resolution order:
+      1. Caller passed `email` + `password` explicitly.
+      2. `credentials.retrieve(".approach.app", required=["email","password"])`
+         matchmakes an installed `@provides(login_credentials)` skill
+         (1Password, Keychain, etc.).
+      3. Nothing matched → structured `NeedsCredentials` error; agent
+         surfaces "add it to your password manager, or pass it directly."
+
+    On success, the skill runs the Cognito USER_PASSWORD_AUTH handshake
+    and persists `{email, password, idToken, refreshToken}` via the
+    `__secrets__` envelope under `(.approach.app, email)`. Authed tools
+    read the IdToken from `params.auth.idToken` on subsequent calls.
+    """
+    if not email or not password:
+        creds = await credentials.retrieve(
+            domain=".approach.app",
+            required=["email", "password"],
+        )
+        if creds and creds.get("found"):
+            val = creds.get("value") or {}
+            email = email or val.get("email") or ""
+            password = password or val.get("password") or ""
+
+    if not email or not password:
+        return skill_error(
+            "Missing credentials for .approach.app. Add an ABP login "
+            "item to 1Password / Keychain, or call login() with "
+            "email= and password= directly.",
+            code="NeedsCredentials",
+            domain=".approach.app",
+            required=["email", "password"],
+            help_url="https://boulderingproject.portal.approach.app/login",
+        )
+
+    result = await _cognito_initiate_auth(email, password)
+    canonical = normalize_email(email)
+    secret = skill_secret(
+        domain=".approach.app",
+        identifier=canonical,
+        item_type="login_credentials",
+        value={
+            "email": canonical,
+            "password": password,
+            "idToken": result["IdToken"],
+            "refreshToken": result.get("RefreshToken"),
+            "accessToken": result.get("AccessToken"),
+            "expiresIn": result.get("ExpiresIn"),
+        },
+        source="austin-boulder-project",
+        metadata={
+            "masked": {
+                "password": "••••••••",
+                "idToken": f"•••{result['IdToken'][-6:]}",
+            },
+            "tokenType": result.get("TokenType"),
+        },
+    )
+    return {
+        "__secrets__": [secret],
+        "__result__": {
+            "status": "authenticated",
+            "identifier": canonical,
+        },
+    }
