@@ -123,9 +123,13 @@ def _map_person(person):
     names = person.get("names", [{}])
     name_obj = names[0] if names else {}
     display_name = name_obj.get("displayName") or ""
-    first_name = name_obj.get("givenName")
-    last_name = name_obj.get("familyName")
-    middle_name = name_obj.get("middleName")
+    given = name_obj.get("givenName")
+    family = name_obj.get("familyName")
+    middle = name_obj.get("middleName")
+    honorific_prefix = name_obj.get("honorificPrefix")
+    honorific_suffix = name_obj.get("honorificSuffix")
+    phonetic_given = name_obj.get("phoneticGivenName")
+    phonetic_family = name_obj.get("phoneticFamilyName")
 
     # Fall back to organization name if no personal name
     if not display_name:
@@ -136,9 +140,13 @@ def _map_person(person):
     result = {
         "id": resource_name,
         "name": display_name,
-        "firstName": first_name,
-        "lastName": last_name,
-        "middleName": middle_name,
+        "givenName": given,
+        "familyName": family,
+        "additionalName": middle,
+        "honorificPrefix": honorific_prefix,
+        "honorificSuffix": honorific_suffix,
+        "phoneticGivenName": phonetic_given,
+        "phoneticFamilyName": phonetic_family,
     }
 
     # Nickname

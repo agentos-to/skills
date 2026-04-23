@@ -19,15 +19,26 @@ def _auth_header(params: dict) -> dict:
 
 
 def _map_person(p: dict) -> dict:
+    """PostHog 'person' maps to an agentOS `account` on the PostHog platform.
+    A real human may appear as multiple PostHog persons (one per project).
+    Telemetry (browser, os, UTM) belongs on account metadata, not on the
+    person shape — a human doesn't have a browser.
+    """
     props = p.get("properties") or {}
     distinct_ids = p.get("distinct_ids") or []
+    email = props.get("email")
     return {
         "id": p.get("uuid"),
-        "name": props.get("name") or props.get("email") or (distinct_ids[0] if distinct_ids else None) or "Unknown",
-        "email": props.get("email"),
-        "published": p.get("created_at"),
+        "name": props.get("name") or email or (distinct_ids[0] if distinct_ids else None) or "Unknown",
+        "issuer": "posthog.com",
+        "identifier": email or p.get("uuid"),
+        "email": email,
+        "joinedDate": p.get("created_at"),
+        "lastActive": p.get("last_seen_at"),
+        # PostHog-specific identity + touchpoint data lives here, not on
+        # person — if we later want to reason over these we can break
+        # them out into an `analytics_event` or similar shape.
         "distinctIds": distinct_ids,
-        "lastSeenAt": p.get("last_seen_at"),
         "browser": props.get("$browser"),
         "os": props.get("$os"),
         "initialReferrer": props.get("$initial_referrer"),
@@ -50,7 +61,7 @@ def _map_event(e: dict) -> dict:
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
-@returns("person[]")
+@returns("account[]")
 @connection("api")
 async def list_persons(*, project_id: str, search: str = None, limit: int = None, offset: int = None, **params) -> list[dict]:
     """List persons in a project
@@ -72,7 +83,7 @@ async def list_persons(*, project_id: str, search: str = None, limit: int = None
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
-@returns("person")
+@returns("account")
 @connection("api")
 async def get_person(*, project_id: str, id: str, **params) -> dict:
     """Get a person by UUID
@@ -86,7 +97,7 @@ async def get_person(*, project_id: str, id: str, **params) -> dict:
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
-@returns("person[]")
+@returns("account[]")
 @connection("api")
 async def search_persons(*, project_id: str, query: str, limit: int = None, **params) -> list[dict]:
     """Search persons by email or name

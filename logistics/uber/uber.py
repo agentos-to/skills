@@ -318,8 +318,8 @@ async def whoami(**params) -> dict:
         # Account-shaped entity — stable ID for graph upsert
         "id": user.get("uuid"),
         "name": f"{first} {last}".strip() or None,
-        "firstName": first or None,
-        "lastName": last or None,
+        "givenName": first or None,
+        "familyName": last or None,
         "email": user.get("email"),
         "phone": user.get("formattedNumber"),
         "rating": user.get("rating"),
@@ -470,8 +470,8 @@ async def get_trip(trip_id: str, **params) -> dict:
     if driver_name:
         out["driver"] = {
             "name": driver_name,
-            "firstName": driver_parts[0] if driver_parts else None,
-            "lastName": driver_parts[1] if len(driver_parts) > 1 else None,
+            "givenName": driver_parts[0] if driver_parts else None,
+            "familyName": driver_parts[1] if len(driver_parts) > 1 else None,
         }
 
     if waypoints:
@@ -598,8 +598,8 @@ async def get_eats_profile(**params) -> dict:
 
     result = {
         "name": name or None,
-        "firstName": first or None,
-        "lastName": last or None,
+        "givenName": first or None,
+        "familyName": last or None,
         "image": data.get("pictureUrl"),
         "country": data.get("geoIpCountryCode"),
         "createdAt": data.get("creationTime"),

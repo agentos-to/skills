@@ -101,8 +101,8 @@ def _map_attendee(att):
     return {
         "name": name,
         "handle": email,
-        "firstName": parts[0] if parts else None,
-        "lastName": parts[1] if len(parts) > 1 else None,
+        "givenName": parts[0] if parts else None,
+        "familyName": parts[1] if len(parts) > 1 else None,
         "rsvp": att.get("responseStatus"),
         "isSelf": att.get("self", False),
         "isOptional": att.get("optional", False),
@@ -123,8 +123,8 @@ def _map_person_from_gcal(person):
     return {
         "name": name,
         "handle": email,
-        "firstName": parts[0] if parts else None,
-        "lastName": parts[1] if len(parts) > 1 else None,
+        "givenName": parts[0] if parts else None,
+        "familyName": parts[1] if len(parts) > 1 else None,
         "isSelf": person.get("self", False),
     }
 
