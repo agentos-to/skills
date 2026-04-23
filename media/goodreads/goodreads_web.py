@@ -154,61 +154,44 @@ async def check_session(**params) -> dict[str, Any]:
     """
 
     resp = await client.get(BASE)
-    if resp["status"] != 200:
+
+    # Non-200 or sign-in redirect → cookies are dead.
+    if resp["status"] != 200 or "/user/sign_in" in str(resp["url"]):
         return {"authenticated": False}
 
-    body = resp["body"]
-
-    # Redirect to sign-in means cookies are invalid.
-    if "/user/sign_in" in str(resp["url"]):
+    # /user/show/<numeric-id>-<first-last> — the logged-in user's own
+    # profile link in the nav. One match yields both fields.
+    m = re.search(r'/user/show/(\d+)-([^"&?/]+)', resp["body"])
+    if not m:
         return {"authenticated": False}
-
-    user_id_match = re.search(r'/user/show/(\d+)', body)
-    user_id = user_id_match.group(1) if user_id_match else ""
-
-    # Slug: /user/show/12345-first-last  →  "first-last"
-    slug = ""
-    display_name = ""
-    slug_match = re.search(r'/user/show/\d+-([^"&?/]+)', body)
-    if slug_match:
-        slug = slug_match.group(1)
-        display_name = slug.replace("-", " ").strip().title()
-
-    if not user_id:
-        return {"authenticated": False}
+    user_id, slug = m.group(1), m.group(2)
+    display_name = slug.replace("-", " ").strip().title()
 
     # /user/edit renders the canonical account email inside an `<em>` tag
     # on the "Alert emails will be sent to <em>...</em>" notice. Reachable
     # only when session cookies are valid — anonymous visitors are
     # redirected to /user/sign_in long before this markup appears.
     edit_resp = await client.get(f"{BASE}/user/edit")
-    email = ""
-    if edit_resp["status"] == 200:
-        em = re.search(
-            r'Alert emails will be sent to\s*<em>\s*([^<\s]+@[^<\s]+)\s*</em>',
-            edit_resp["body"],
+    em = re.search(
+        r'Alert emails will be sent to\s*<em>\s*([^<\s]+@[^<\s]+)\s*</em>',
+        edit_resp["body"],
+    )
+    if not em:
+        raise RuntimeError(
+            "Goodreads /user/edit didn't expose the account email in the "
+            "expected `<em>` marker — site layout changed, update the "
+            "regex."
         )
-        if em:
-            email = em.group(1)
-
-    # Email is the canonical identifier per the account-check protocol.
-    # Without it there's no durable way to address the account row.
-    if not email:
-        return {"authenticated": False}
-
-    canonical = normalize_email(email)
-    result: dict[str, Any] = {
+    canonical = normalize_email(em.group(1))
+    return {
         "authenticated": True,
         "at": _GOODREADS,
         "identifier": canonical,
         "email": canonical,
+        "handle": normalize_handle(slug),
+        "displayName": display_name,
         "userId": user_id,
     }
-    if slug:
-        result["handle"] = normalize_handle(slug)
-    if display_name:
-        result["displayName"] = display_name
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -246,30 +229,21 @@ async def search_people(*, query: str = "", limit: int = 10, **params) -> list[d
 async def _resolve_user_id(user_id: str, params: dict) -> str:
     """Resolve user_id from an explicit param or the authed session.
 
-    - Explicit `user_id` wins.
-    - Legacy numeric `auth.identifier` (pre-email cutover) wins next —
-      avoids an extra round trip when the credential store still keys on
-      the user_id directly.
-    - Otherwise scrape the home page's nav for `/user/show/<id>`. One
-      GET; shares the ambient Jar that `client` already set up.
+    Explicit `user_id` wins; otherwise scrape the home page's nav for
+    `/user/show/<id>` — same GET `check_session` already does, shares
+    the ambient Jar.
     """
     uid = str(user_id).strip() if user_id else ""
-    if not uid:
-        auth = params.get("auth") or {}
-        legacy = str(auth.get("identifier") or "").strip()
-        if legacy.isdigit():
-            return legacy
-        resp = await client.get(BASE)
-        if resp["status"] == 200:
-            m = re.search(r'/user/show/(\d+)', resp["body"])
-            if m:
-                return m.group(1)
-    if not uid:
-        raise ValueError(
-            "user_id required — pass it explicitly, or make sure the "
-            "Goodreads session is authed so the home page exposes it."
-        )
-    return uid
+    if uid:
+        return uid
+    resp = await client.get(BASE)
+    m = re.search(r'/user/show/(\d+)', resp["body"])
+    if m:
+        return m.group(1)
+    raise ValueError(
+        "user_id required — pass it explicitly, or make sure the "
+        "Goodreads session is authed so the home page exposes it."
+    )
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')

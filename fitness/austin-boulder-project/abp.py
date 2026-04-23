@@ -562,8 +562,8 @@ async def check_session(**params) -> dict[str, Any]:
     """Verify the portal session and return the authed identity.
 
     Calls `/customers` on the portal API with the stored IdToken. The
-    response includes the Cognito subject plus the account email,
-    which we return as the canonical identifier.
+    response includes the Cognito subject plus the account email; the
+    email is the canonical identifier.
     """
     auth = params.get("auth") or {}
     token = auth.get("idToken")
@@ -576,26 +576,19 @@ async def check_session(**params) -> dict[str, Any]:
     if resp["status"] >= 400:
         return {"authenticated": False}
 
-    customer = resp.get("json") or {}
-    email_raw = customer.get("email") or auth.get("email")
-    if not email_raw:
-        return {"authenticated": True, "at": _ABP}
-
-    canonical = normalize_email(email_raw)
-    result: dict[str, Any] = {
+    customer = resp["json"]
+    canonical = normalize_email(customer["email"])
+    display = " ".join(
+        p for p in (customer.get("firstName"), customer.get("lastName")) if p
+    ).strip()
+    return {
         "authenticated": True,
         "at": _ABP,
         "identifier": canonical,
         "email": canonical,
+        "displayName": display,
+        "userId": str(customer["id"]),
     }
-    first = customer.get("firstName")
-    last = customer.get("lastName")
-    if first or last:
-        result["displayName"] = " ".join(p for p in (first, last) if p).strip()
-    cid = customer.get("id") or customer.get("cognitoId") or customer.get("subject")
-    if cid is not None:
-        result["userId"] = str(cid)
-    return result
 
 
 @returns({"status": "string", "identifier": "string"})

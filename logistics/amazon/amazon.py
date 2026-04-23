@@ -1445,11 +1445,13 @@ _AMAZON = {"shape": "organization", "url": "https://amazon.com", "name": "Amazon
 async def check_session(**params) -> dict[str, Any]:
     """Check session liveness and return the authed account identity.
 
-    Fetches two pages:
-    1. `/gp/css/homepage.html` — nav bar display name + internal ids +
-       Prime status from the JS config blob.
-    2. `/ax/account/manage` — Login & Security page, carries the account
-       email (the canonical identifier for Amazon accounts).
+    Identity is keyed on the account email scraped from `/ax/account/manage`
+    (Login & Security). When Amazon gates that page behind a single-factor
+    step-up challenge, we return `authenticated: false` — that triggers the
+    engine's auto-relogin path, which dispatches the skill's `login` tool
+    to complete the step-up. Until that `login` tool ships, the call
+    surfaces as an auth failure instead of silently producing a non-email
+    identifier.
 
     Service-specific fields (customerId, marketplaceId, isPrime) ride in
     `metadata.amazon` per the account-check protocol.
@@ -1457,71 +1459,45 @@ async def check_session(**params) -> dict[str, Any]:
 
     await _warm_session()
     resp = await _get(f"{BASE}/gp/css/homepage.html")
-
-    if resp["status"] != 200:
+    if resp["status"] != 200 or "ap/signin" in str(resp["url"]):
         return {"authenticated": False}
 
     body = resp["body"]
+    customer_id = re.search(r'"customerId"\s*:\s*"([A-Z0-9]+)"', body)
+    marketplace = re.search(r"ue_mid\s*=\s*'([^']+)'", body)
+    is_prime = bool(re.search(r"isPrimeMember[=:]\s*['\"]?true", body, re.I))
+    display = re.search(
+        r"""\$Nav\.declare\(['"]config\.customerName['"],\s*'([^']+)'\)""",
+        body,
+    )
 
-    if "ap/signin" in str(resp["url"]):
+    # Login & Security is behind a step-up challenge for most sessions.
+    # No email = no identity — surface the session as not-authenticated.
+    manage = await _get(f"{BASE}/ax/account/manage")
+    if manage["status"] != 200 or "ap/signin" in str(manage["url"]):
         return {"authenticated": False}
-
-    name_match = re.search(
-        r'nav-link-accountList-nav-line-1[^>]*>Hello,\s*([^<]+)<', body
-    )
-    customer_name_match = re.search(
-        r"""\$Nav\.declare\(['"]config\.customerName['"],\s*'([^']+)'\)""", body
-    )
-    customer_id_match = re.search(r'"customerId"\s*:\s*"([A-Z0-9]+)"', body)
-    marketplace_match = re.search(r"ue_mid\s*=\s*'([^']+)'", body)
-    prime_match = re.search(r"isPrimeMember[=:]\s*['\"]?true", body, re.I)
-
-    display = (
-        name_match.group(1).strip() if name_match
-        else customer_name_match.group(1).strip() if customer_name_match
-        else None
-    )
-    customer_id = customer_id_match.group(1) if customer_id_match else None
-    marketplace_id = marketplace_match.group(1) if marketplace_match else None
-
-    # The Login-&-Security page requires a single-factor step-up — Amazon
-    # blocks it behind /ap/signin even on a live session. Try it (it works
-    # when cookies carry a fresh step-up token); otherwise fall back to
-    # the customerId as canonical identifier. Agent-driven initial login
-    # (Wave 2 step 4 pattern) will make step-up achievable later; for now
-    # the customerId keeps the credential row stable and non-`default`.
-    email = None
-    manage_resp = await _get(f"{BASE}/ax/account/manage")
-    if manage_resp["status"] == 200 and "ap/signin" not in str(manage_resp["url"]):
-        em = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", manage_resp["body"])
-        if em:
-            email = em.group(0)
+    em = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", manage["body"])
+    if not em:
+        return {"authenticated": False}
 
     metadata: dict[str, Any] = {}
     if customer_id:
-        metadata["customerId"] = customer_id
-    if marketplace_id:
-        metadata["marketplaceId"] = marketplace_id
-    if prime_match is not None:
+        metadata["customerId"] = customer_id.group(1)
+    if marketplace:
+        metadata["marketplaceId"] = marketplace.group(1)
+    if is_prime:
         metadata["isPrime"] = True
-
-    # Canonical identifier: email if we got it, otherwise customerId.
-    # customerId is Amazon's stable per-account key — never changes.
-    identifier = normalize_email(email) if email else customer_id
-    if not identifier:
-        return {"authenticated": True, "at": _AMAZON}
 
     result: dict[str, Any] = {
         "authenticated": True,
         "at": _AMAZON,
-        "identifier": identifier,
+        "identifier": normalize_email(em.group(0)),
+        "email": normalize_email(em.group(0)),
     }
-    if email:
-        result["email"] = normalize_email(email)
     if display:
-        result["displayName"] = display
+        result["displayName"] = display.group(1).strip()
     if customer_id:
-        result["userId"] = customer_id
+        result["userId"] = customer_id.group(1)
     if metadata:
         result["metadata"] = {"amazon": metadata}
     return result

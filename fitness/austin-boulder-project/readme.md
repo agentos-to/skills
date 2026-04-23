@@ -32,9 +32,6 @@ On success, the skill runs AWS Cognito `USER_PASSWORD_AUTH` and stashes
 Authed tools (`book_class`, `get_my_memberships`, etc.) read the IdToken
 automatically from `params.auth` on subsequent calls.
 
-See `auth-notes.md` for the reverse-engineering notes on the Cognito +
-portal handshake.
-
 ## Locations
 
 | Name | ID |
