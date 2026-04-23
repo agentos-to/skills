@@ -85,7 +85,7 @@ async def _authed_post(path: str, body=None, **kwargs) -> dict:
 
 # The United org node — reused as identity namespace for account / membership
 _UNITED_ORG = {
-    "shape": ["organization", "airline"],
+    "shape": "airline",
     "name": "United Airlines",
     "url": "https://www.united.com",
     "iataCode": "UA",
@@ -145,20 +145,34 @@ async def check_session(**params) -> dict:
     if not bearer:
         raise RuntimeError("SESSION_EXPIRED: no bearer could be minted")
 
-    # Probe validate-token to confirm the bearer is live + user-scoped
-    check = await client.get(
-        f"{_BASE}/api/auth/validate-token",
+    # Don't trust /api/auth/validate-token — it returns {valid: false} for
+    # BOTH "actually expired" and "anonymously scoped" bearers. Since
+    # anonymous-token endpoint can return an anonymous bearer when cookies
+    # are too stale to mint a user-scoped token, validate-token can't
+    # distinguish. Instead, hit the real user endpoint: if /User/profile
+    # returns a CustomerId, we're user-authenticated. 403 = not.
+    resp = await client.get(
+        f"{_BASE}/xapi/myunited/User/profile",
         client="fetch",
         headers={
             "Accept": "application/json",
+            "Accept-Language": "en-US",
             "X-Authorization-api": f"bearer {bearer}",
         },
     )
-    if not (check.get("json") or {}).get("valid"):
-        raise RuntimeError("SESSION_EXPIRED: validate-token returned valid=false")
+    status = resp.get("status")
+    if status == 403:
+        raise RuntimeError(
+            "SESSION_EXPIRED: United returned 403 on /User/profile. The bearer "
+            "is live but ANONYMOUSLY scoped (cookies present, server session "
+            "stale). Browser cookies need a flush — interact with united.com "
+            "in Brave (click a page that hits /xapi/), wait ~30s, retry. "
+            "If that fails, sign back in at "
+            "https://www.united.com/en/us/account/sign-in"
+        )
+    if status != 200:
+        raise RuntimeError(f"United profile call returned {status}: {resp.get('body', '')[:200]}")
 
-    # Pull minimal identity from the profile
-    resp = await _authed_get("/xapi/myunited/User/profile")
     data = ((resp.get("json") or {}).get("data") or {})
     traveler = ((data.get("profile") or {}).get("Travelers") or [{}])[0]
     mp_id = traveler.get("MileagePlusId") or ""
@@ -172,7 +186,7 @@ async def check_session(**params) -> dict:
         "displayName": traveler.get("CustomerName") or "",
         "accountType": "mileageplus",
         "isActive": True,
-        "at": {"shape": ["organization", "airline"], "name": "United Airlines",
+        "at": {"shape": "airline", "name": "United Airlines",
                "url": "https://www.united.com", "iataCode": "UA"},
     }
 
@@ -220,7 +234,7 @@ async def get_profile(**params) -> dict:
             "handle": mp_id,
             "displayName": full_name,
             "accountType": "mileageplus",
-            "at": {"shape": ["organization", "airline"], "name": "United Airlines",
+            "at": {"shape": "airline", "name": "United Airlines",
                    "url": "https://www.united.com", "iataCode": "UA"},
         }],
     }
@@ -231,7 +245,7 @@ async def get_profile(**params) -> dict:
             "name": f"MileagePlus {mp_id}",
             "status": "active",
             "tier": _elite_tier(traveler),
-            "at": {"shape": ["organization", "airline"], "name": "United Airlines",
+            "at": {"shape": "airline", "name": "United Airlines",
                    "url": "https://www.united.com", "iataCode": "UA"},
         }]
 
@@ -279,7 +293,7 @@ async def get_mileageplus(**params) -> dict:
             f"MileagePlus member {mp_id}. "
             f"{miles:,} redeemable miles. Tier: {tier_label}."
         ),
-        "at": {"shape": ["organization", "airline"], "name": "United Airlines",
+        "at": {"shape": "airline", "name": "United Airlines",
                "url": "https://www.united.com", "iataCode": "UA"},
         "member": {
             "id": f"united-customer:{traveler.get('CustomerId')}",
@@ -331,7 +345,7 @@ async def list_trips(upcoming_only: bool = True, **params) -> list[dict]:
             "status": (itin.get("Status") or "confirmed").lower(),
             "bookingType": "instant",
             "name": f"United reservation {pnr}",
-            "at": {"shape": ["organization", "airline"], "name": "United Airlines",
+            "at": {"shape": "airline", "name": "United Airlines",
                    "url": "https://www.united.com", "iataCode": "UA"},
             "_raw": itin,
         })
@@ -385,7 +399,7 @@ def _segment_to_flight(seg: dict) -> dict:
         "arrivalTime": _iso_depart(seg.get("destinationDateTime"), seg.get("destTimezoneOffset")),
         "durationMinutes": seg.get("travelMinutes"),
         "airline": {
-            "shape": ["organization", "airline"],
+            "shape": "airline",
             "iataCode": marketing,
             "name": seg.get("marketingCarrierDescription") or "United Airlines",
             "url": "https://www.united.com" if marketing == "UA" else None,
@@ -432,7 +446,7 @@ def _flight_to_trip(f: dict) -> dict:
         "stops": len(f.get("connections") or []),
         "cabinClass": None,  # populated from the product that an offer wraps
         "carrier": {
-            "shape": ["organization", "airline"],
+            "shape": "airline",
             "iataCode": carrier,
             "name": "United Airlines",
             "url": "https://www.united.com",
@@ -592,7 +606,7 @@ async def search_flights(
                 "availability": "available" if amount is not None else "unavailable",
                 "bookingToken": product_id,
                 "offeredBy": {
-                    "shape": ["organization", "airline"],
+                    "shape": "airline",
                     "iataCode": "UA",
                     "name": "United Airlines",
                     "url": "https://www.united.com",
