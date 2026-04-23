@@ -258,26 +258,50 @@ def _location_to_entity(loc: dict) -> dict:
     }
 
 
+_RE_HTML_TAG = re.compile(r"<[^>]+>")
+_RE_WS = re.compile(r"\s+")
+
+
+def _strip_html(html: str | None) -> str | None:
+    """Tilefive stores class descriptions as HTML blobs with inline
+    styles. Strip tags for a plain-text rendering suitable for agent
+    reasoning and terse UI. Keeps the prose; drops the markup noise.
+    """
+    if not html:
+        return None
+    text = _RE_HTML_TAG.sub(" ", html)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
+    text = _RE_WS.sub(" ", text).strip()
+    return text or None
+
+
 def _booking_to_entity(b: dict) -> dict:
     event = b.get("event", {})
     activities = event.get("activitys") or []
     activity_name = activities[0].get("name", "") if activities else ""
-    spots = b.get("ticketsRemaining")
-    capacity = event.get("maxCustomers")
-    full = spots == 0
+    # Tilefive widget response uses `customerCount` (currently reserved)
+    # and `event.maxCustomers` (capacity). There is no `ticketsRemaining`
+    # field — an earlier version of this skill read it and silently got
+    # `None`, causing every class to render as "full capacity available".
+    taken = b.get("customerCount")
+    capacity = event.get("maxCustomers") or b.get("maxNumOfGuests")
+    spots = (capacity - taken) if (capacity is not None and taken is not None) else None
+    full = spots == 0 if spots is not None else False
     desc = []
     if activity_name: desc.append(activity_name)
     if full: desc.append("FULL")
-    elif spots is not None: desc.append(f"{spots}/{capacity} spots")
+    elif spots is not None and capacity is not None: desc.append(f"{spots}/{capacity} spots")
     return {
         "id": b["id"],
         "name": b["name"],
         "content": " — ".join(desc),
+        "description": _strip_html(b.get("description")),
         "startDate": b.get("startDT"),
         "endDate": b.get("endDT"),
         "timezone": AUSTIN_TZ_NAME,
         "activityType": activity_name,
         "capacity": capacity,
+        "customerCount": taken,
         "spotsRemaining": spots,
         "isFull": full,
     }
@@ -400,8 +424,17 @@ async def book_class(
     if resp["status"] >= 400:
         body = resp.get("body") or ""
         j = resp.get("json") or {}
-        msg = j.get("message") if isinstance(j, dict) else None
-        return {"ok": False, "message": msg or f"HTTP {resp['status']}: {body[:200]}"}
+        msg = (j.get("message") if isinstance(j, dict) else None) or f"HTTP {resp['status']}: {body[:200]}"
+        # The portal returns "Booking is already full" as its capacity
+        # signal (via 404 on /bookings/{id}/customers). We enrich the
+        # message with a suggestion to re-query the schedule so the
+        # caller sees current fullness rather than assuming stale state.
+        if "full" in msg.lower():
+            msg = (
+                f"{msg} Class {booking_instance_id} is at capacity. "
+                "Call `get_schedule` to see other times with open spots."
+            )
+        return {"ok": False, "message": msg, "booking_instance_id": booking_instance_id}
     j = resp.get("json") or {}
     return {
         "ok": True,
@@ -513,16 +546,25 @@ def _pass_to_entity(p: dict, email: str | None = None) -> dict:
 @test.skip(reason="needs credentials")
 @returns("membership[]")
 @connection("portal")
-async def get_my_memberships(**params) -> list[dict]:
+async def get_my_memberships(include_expired: bool = False, **params) -> list[dict]:
     """List memberships held by the logged-in account.
 
     Emitted memberships link to both the `account` (ABP login) and
     the `location` (gym branch) so "what memberships do I have?" and
     "which gym?" work cross-skill on the graph.
+
+    Args:
+        include_expired: when false (default), filter to `status=="active"`
+            memberships only. Historical/cancelled/expired rows clutter
+            the common "what am I paying for" query; callers who want the
+            full history pass `include_expired=true`.
     """
     email = _email_from_credentials(params)
     raw = await _authed_get(params, "/customers/memberships")
-    return [_membership_to_entity(m, email) for m in (raw or [])]
+    rows = raw or []
+    if not include_expired:
+        rows = [m for m in rows if (m.get("status") or "").lower() == "active"]
+    return [_membership_to_entity(m, email) for m in rows]
 
 
 @test.skip(reason="needs credentials")

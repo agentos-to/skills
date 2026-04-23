@@ -71,6 +71,23 @@ Returned `class` entities carry `startDate` / `endDate` in UTC plus a
 `timezone` field (`"America/Chicago"`) so renderers can shift to local
 time without re-deriving the gym's tz.
 
+Capacity fields:
+- `capacity` — max registrants (from `event.maxCustomers`)
+- `customerCount` — currently reserved
+- `spotsRemaining` = `capacity - customerCount`
+- `isFull` — convenience flag when `spotsRemaining == 0`
+
+## Memberships
+
+`get_my_memberships` filters to `status="active"` by default. Pass
+`include_expired: true` to see historical rows (cancelled annuals,
+old prepaid memberships, etc.) — useful for "what have I bought
+before?" queries.
+
+`book_class` auto-picks the caller's first active membership when
+`membership_id` isn't supplied. For multi-membership accounts, pass
+the explicit id returned by `get_my_memberships`.
+
 ## Technical Notes
 
 See `requirements.md` for full reverse-engineering notes on the Tilefive API.
@@ -79,3 +96,4 @@ Key discoveries:
 - `Authorization` header on the widgets API is the namespace string (`boulderingproject`), not a JWT
 - `httpx` with `http2=True` is required — CloudFront WAF uses JA4 TLS fingerprinting that blocks urllib/requests
 - Cognito auth uses `IdToken` (not `AccessToken`) for portal API calls
+- The widgets `/cal` response uses `customerCount` (not `ticketsRemaining`) for current fullness; capacity lives on `event.maxCustomers`
