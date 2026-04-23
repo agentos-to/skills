@@ -17,6 +17,13 @@ test:
   list_trips:
     params:
       upcoming_only: true
+  search_flights:
+    params:
+      origin: AUS
+      destination: SFO
+      depart_date: '2026-04-28'
+  store_session_cookies:
+    skip: true  # requires runtime cookie params; not auto-testable
 ---
 
 # United Airlines
@@ -57,7 +64,41 @@ Skeleton — nothing shipped yet. First milestone is `check_session` + `get_prof
 
 ## Setup
 
-Log in to [united.com](https://www.united.com) in Brave. Cookies are extracted automatically.
+Two paths:
+
+### 1. Brave cookie provider (zero-config, default)
+
+Log in to [united.com](https://www.united.com) in Brave. The engine's
+`brave-browser` provider extracts cookies from Brave's encrypted SQLite
+DB. **Caveat:** Brave buffers cookie writes to disk and only flushes
+periodically — immediately after a fresh login, the skill may see stale
+cookies for up to ~5 minutes until Brave flushes. If `check_session`
+returns SESSION_EXPIRED while you're clearly logged in in Brave, either
+wait ~5 min or fully quit (Cmd+Q) and reopen Brave to force a flush.
+
+### 2. `store_session_cookies` (bypasses Brave's stale DB)
+
+For when you want the skill to use cookies independent of Brave's disk
+state — e.g. you just logged in and don't want to wait. The agent grabs
+live cookies (from CDP, the browser devtools Network tab, or any other
+source) and passes them in:
+
+```js
+run({ skill: "united", tool: "store_session_cookies", params: {
+  cookies: {
+    AuthCookie: "…", Session: "…", User: "…",
+    "PIM-SESSION-ID": "…", _ucid: "…", "1pc_session": "…",
+    // …plus any Akamai bm_*, _abck, ak_bmsc cookies
+  }
+}});
+```
+
+The skill validates these against `/xapi/myunited/User/profile` (so we
+know the cookies represent a real logged-in session, not an anonymous
+visit) and persists them to the engine's credential store via
+`__secrets__`. Because the engine resolves cookies by newest-timestamp
+across all providers, these fresh cookies now beat Brave's stale DB on
+every subsequent call.
 
 ## Transport
 

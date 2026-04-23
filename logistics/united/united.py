@@ -3,23 +3,36 @@ United Airlines skill — profile, MileagePlus balances, reservations,
 flight search, and travel history.
 
 Auth mechanics (see requirements.md for the full story):
-- Session cookies live on `.united.com` (the engine's cookie providers
-  pull them from Brave). Critical cookies: AuthCookie, Session, User,
-  PIM-SESSION-ID, 1pc_session, _ucid, plus Akamai bot-manager cookies
-  (_abck, bm_*, ak_bmsc, akacd_*) which must pass through unchanged.
+- Session cookies live on `.united.com`. Critical cookies: AuthCookie,
+  Session, User, PIM-SESSION-ID, 1pc_session, _ucid, plus Akamai
+  bot-manager cookies (_abck, bm_*, ak_bmsc, akacd_*) which must pass
+  through unchanged.
 - Every API call wants `X-Authorization-api: bearer <hash>`. The bearer
   is minted by GET /api/auth/anonymous-token — misleading name; with
   cookies present it returns a USER-SCOPED token. Short-lived (~30min).
 
-The skill mints a bearer per tool call (tiny cost — one extra request)
-so each call is self-contained. A future optimization is caching on the
-connection, but that requires a bearer-refresh path and isn't worth it
-until we're making many calls per session.
+Cookie sourcing:
+The default path reads cookies from the brave-browser provider (Brave's
+on-disk SQLite). That's often stale relative to what Brave has in memory
+— Brave flushes cookies lazily. To sidestep, this skill provides:
+
+- `store_session_cookies(cookies=<dict>)` — manual: caller passes the
+  fresh cookie values (maybe grabbed via CDP or the user's browser
+  devtools), we validate against /User/profile and persist via
+  __secrets__. The engine's credential store then becomes the freshest
+  source for future calls.
+
+- `login(cdp_port=9222)` — auto: connects to a live Brave/Chrome via
+  CDP, reads the in-memory cookies (no SQLite lag), validates, persists.
+  Requires Brave launched with --remote-debugging-port.
+
+Both live at the engine's credential-store tier (not Brave's), so
+staleness of Brave's disk DB becomes irrelevant.
 """
 
 import json as _json
 
-from agentos import client, connection, returns, timeout
+from agentos import client, connection, returns, timeout, skill_secret, skill_result
 
 
 connection(
@@ -130,6 +143,98 @@ def _elite_tier(traveler: dict) -> str | None:
 
 
 # ── tools ─────────────────────────────────────────────────────────────────────
+
+
+@returns("account")
+@connection("web")
+@timeout(30)
+async def store_session_cookies(*, cookies: dict, **params) -> dict:
+    """Store a dict of cookie name→value pairs as the engine's canonical
+    United session. Validates against /User/profile, then persists via
+    __secrets__ so future calls use these cookies regardless of what the
+    brave-browser provider's SQLite DB says.
+
+    This is the recommended path when Brave's on-disk cookie DB is stale
+    relative to its in-memory state — the user is logged in in Brave, but
+    the skill keeps reading an older snapshot. The agent grabs fresh
+    cookies via CDP (or pastes them from browser devtools) and hands them
+    to us.
+
+    Args:
+        cookies: Dict like {"AuthCookie": "...", "Session": "...", ...}.
+          Must include the auth-tier trio: AuthCookie, Session, User.
+    """
+    if not cookies:
+        return skill_result(error="cookies dict is required")
+
+    needed = {"AuthCookie", "Session", "User"}
+    missing = needed - set(cookies.keys())
+    if missing:
+        return skill_result(error=f"missing required cookie(s): {sorted(missing)}")
+
+    cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
+
+    # Mint a bearer using the caller-supplied cookies (not the engine's ambient jar).
+    mint = await client.get(
+        f"{_BASE}/api/auth/anonymous-token",
+        client="fetch",
+        cookies=cookie_header,
+    )
+    if mint.get("status") != 200:
+        return skill_result(error=f"anonymous-token mint failed: status={mint.get('status')}")
+    bearer = ((mint.get("json") or {}).get("data") or {}).get("token", {}).get("hash")
+    if not bearer:
+        return skill_result(error="anonymous-token mint returned no hash")
+
+    # Verify the bearer is user-scoped by hitting /User/profile
+    probe = await client.get(
+        f"{_BASE}/xapi/myunited/User/profile",
+        client="fetch",
+        cookies=cookie_header,
+        headers={
+            "Accept": "application/json",
+            "X-Authorization-api": f"bearer {bearer}",
+        },
+    )
+    if probe.get("status") != 200:
+        return skill_result(
+            error=(f"cookies validated as anonymous, not user-scoped "
+                   f"(profile returned {probe.get('status')}). "
+                   f"These cookies don't represent a logged-in session.")
+        )
+
+    data = ((probe.get("json") or {}).get("data") or {})
+    prof = data.get("profile") or {}
+    traveler = (prof.get("Travelers") or [{}])[0]
+    mp_id = traveler.get("MileagePlusId") or ""
+    customer_id = traveler.get("CustomerId") or prof.get("CustomerId")
+    display_name = traveler.get("CustomerName") or ""
+
+    if not mp_id:
+        return skill_result(error="profile returned 200 but no MileagePlusId")
+
+    return {
+        "__secrets__": [skill_secret(
+            domain=".united.com",
+            identifier=mp_id,
+            item_type="cookie",
+            value=cookies,
+            source="united",
+            label=f"United Session ({mp_id})",
+            metadata={"united": {"customerId": str(customer_id) if customer_id else None,
+                                 "displayName": display_name}},
+        )],
+        # Shape-conformant account for graph upsert (per check_session convention)
+        "id": f"united:{mp_id}",
+        "issuer": "united.com",
+        "identifier": mp_id,
+        "handle": mp_id,
+        "displayName": display_name,
+        "accountType": "mileageplus",
+        "isActive": True,
+        "at": {"shape": "airline", "name": "United Airlines",
+               "url": "https://www.united.com", "iataCode": "UA"},
+    }
 
 
 @returns("account")
