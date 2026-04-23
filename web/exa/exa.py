@@ -35,7 +35,7 @@ The dashboard UI masks it, but the API returns it in full.
 Key format: UUID (e.g. "5bcbb3da-e415-44f1-8e57-10e92177f378").
 """
 
-from agentos import claims, client, connection, provides, returns, test, timeout, url, web_read, web_search
+from agentos import claims, client, connection, normalize_email, provides, returns, test, timeout, url, web_read, web_search
 
 
 connection(
@@ -129,16 +129,26 @@ async def check_session(**params) -> dict:
 
     Cookies come from the ambient per-call jar seeded by the engine from
     the connection's credential row — skill code never threads them.
+
+    Returns the typed `account` shape per the check_session convention
+    in docs/src/content/docs/skills/auth-flows.md — identifier is the
+    canonical email, userId is Exa's internal stable id.
     """
     session = await _check_session()
     if not session:
         return {"authenticated": False}
     user = session.get("user", {})
+    email_raw = user.get("email")
+    if not email_raw:
+        return {"authenticated": True, "at": _EXA}
+    email = normalize_email(email_raw)
     return {
         "authenticated": True,
         "at": _EXA,
-        "identifier": user.get("email"),
-        "display": user.get("name"),
+        "identifier": email,
+        "email": email,
+        "displayName": user.get("name"),
+        "userId": str(user["id"]) if user.get("id") is not None else None,
     }
 
 
