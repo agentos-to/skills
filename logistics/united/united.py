@@ -1253,3 +1253,242 @@ async def get_seatmap(
         # Non-shape — useful for re-calling with same keys
         "_cartId": cart_id,
     }
+
+
+@returns("pass[]")
+@connection("web")
+@timeout(45)
+async def register_seats(
+    *,
+    cart_id: str,
+    seat_number: str,
+    flight_number: int,
+    origin: str,
+    destination: str,
+    departure_datetime: str,    # "2026-04-28T13:00"
+    arrival_datetime: str,
+    class_of_service: str = "N",
+    fare_basis_code: str = "",
+    traveler_index: str = "0",
+    person_index: str = "1.1",
+    **params,
+) -> list:
+    """Commit a seat selection — the step between seatmap and checkout.
+
+    Hits `/api/ShoppingCart/RegisterSeats` with the chosen seat. The
+    endpoint needs three things we look up from the live cart state:
+    (a) the per-seat price validator token (from SeatMap/Retrieve),
+    (b) the seat's SeatPromotionCode + SeatType (from SeatMap/Retrieve),
+    (c) the full Reservation context (from LoadReservationAndCart).
+    We fetch all three fresh and build the body.
+
+    Returns a `pass[]` — one pass per assigned seat, keyed on
+    (cart, seat, flight). The pass is in "held" state; it becomes
+    "confirmed" after checkout.
+
+    Args:
+        cart_id: UUID from prior booking steps.
+        seat_number: "22B" etc.
+        flight_number, origin, destination, departure_datetime,
+        arrival_datetime: flight identity (same as get_seatmap).
+        class_of_service, fare_basis_code: fare identity.
+        traveler_index: "0" for primary; increments for additional pax.
+        person_index: "1.1" for primary (Reservation.Traveler.Person.Key).
+    """
+    # 1. Load cart for the Reservation context + PersonIndex
+    cart_resp = await _authed_get(
+        f"/api/ShoppingCart/LoadReservationAndCart"
+        f"?cartId={cart_id}&workFlowType=1&clearBundles=false&clearSeats=false&isConfirmationPage=false"
+    )
+    if cart_resp.get("status") != 200:
+        raise RuntimeError(f"LoadReservationAndCart failed: {cart_resp.get('status')}")
+    cart_data = ((cart_resp.get("json") or {}).get("Data") or {}).get("CartData") or {}
+    reservation_raw = cart_data.get("Reservation") or {}
+
+    # 2. Get a fresh seatmap to pull the validator + promo code for our seat
+    # (Reuse the same body-builder logic as get_seatmap)
+    smap = await get_seatmap(
+        cart_id=cart_id, flight_number=flight_number,
+        origin=origin, destination=destination,
+        departure_datetime=departure_datetime, arrival_datetime=arrival_datetime,
+        class_of_service=class_of_service, fare_basis_code=fare_basis_code,
+    )
+    # Walk cabins.rows.seats to find seat_number, extract validator + price
+    # But get_seatmap strips validators — so we need to re-fetch the raw SeatMap
+    # response. Do it inline here (short — doesn't need a separate helper).
+    import uuid
+    from datetime import datetime, date
+
+    prof_resp = await _authed_get("/xapi/myunited/User/profile")
+    prof = ((prof_resp.get("json") or {}).get("data") or {}).get("profile") or {}
+    t0 = (prof.get("Travelers") or [{}])[0]
+    dob_raw = t0.get("BirthDate") or ""
+    try:
+        dob_dt = datetime.fromisoformat(dob_raw.replace("Z","+00:00"))
+        dob_str = dob_dt.strftime("%m/%d/%Y")
+        age = (date.today().year - dob_dt.year) - (
+            (date.today().month, date.today().day) < (dob_dt.month, dob_dt.day)
+        )
+    except Exception:
+        dob_str = dob_raw[:10]
+        age = None
+
+    sm_body = {
+        "cartId": cart_id,
+        "channelTransactionId": str(uuid.uuid4()),
+        "reservationReferenceId": cart_id,
+        "correlationId": "",
+        "sessionKey": f"{cart_id}{uuid.uuid4()}",
+        "dodCabins": ["J", "O"],
+        "seatMapRequest": {
+            "recordLocator": None, "recordLocatorCreatedDate": None,
+            "languageCode": "en-US", "isLapChild": False, "isAwardReservation": False,
+            "flightSegments": [{
+                "premiumProducts": [],
+                "arrivalAirport": {"iataCode": destination, "iataCountryCode": {"CountryCode": "US"}},
+                "arrivalDateTime": arrival_datetime, "checkInSegment": False,
+                "classOfService": class_of_service, "coupons": [{}],
+                "departureAirport": {"iataCode": origin, "iataCountryCode": {"CountryCode": "US"}},
+                "departureDateTime": departure_datetime, "farebasisCode": fare_basis_code,
+                "flightNumber": int(flight_number), "isValidSegment": True,
+                "marketingAirlineCode": "UA", "operatingAirlineCode": "UA",
+                "operatingFlightNumber": int(flight_number), "pricing": "true",
+                "segmentNumber": 1,
+            }],
+            "lofSegments": [], "reservationReferences": None,
+            "travelers": [{
+                "specialServiceRequests": None,
+                "lastName": t0.get("LastName"), "firstName": t0.get("FirstName"),
+                "gender": t0.get("GenderCode") or "M",
+                "passengerTypeCode": "ADT", "travelerIndex": "1.1",
+                "loyaltyProfiles": [{
+                    "loyaltyLevel": "0", "loyaltyProgramCarrierCode": "UA",
+                    "memberShipId": t0.get("MileagePlusId"), "programId": "UA",
+                }],
+                "suffix": t0.get("Suffix") or "", "dateOfBirth": dob_str,
+                "type": "ADT", "id": 1, "age": age,
+            }],
+            "bookingCode": class_of_service, "productCode": "ELF",
+            "callRtd": False, "dutyCode": None, "bundleCode": None,
+            "channelId": "101", "channelName": "OBE",
+            "isPetInCabin": False, "hasSSR": False,
+            "pointOfSale": "US", "currencyCode": "USD",
+        },
+    }
+    sm_resp = await _authed_post("/api/SeatMap/Retrieve", body=sm_body)
+    sm_data = sm_resp.get("json") or {}
+    # Find the target seat + its per-traveler validator
+    target_seat = None
+    for cabin in sm_data.get("cabins") or []:
+        for row in cabin.get("rows") or []:
+            for s in row.get("seats") or []:
+                if s.get("number") == seat_number:
+                    target_seat = s; break
+            if target_seat: break
+        if target_seat: break
+    if not target_seat:
+        raise RuntimeError(f"Seat {seat_number} not found in seatmap")
+
+    # Find validator — in tiers[].pricing[].pricingValidators[]
+    tier_id = int(target_seat.get("tier") or 0)
+    validator = None
+    base_price = 0
+    tax_amount = 0
+    for t in sm_data.get("tiers") or []:
+        if t.get("id") == tier_id:
+            pricing = (t.get("pricing") or [])
+            if pricing:
+                pr = pricing[0]
+                base_price = pr.get("basePrice") or 0
+                tb = pr.get("taxBreakup") or []
+                tax_amount = sum((tx.get("amount") or 0) for tx in tb)
+                for pv in pr.get("pricingValidators") or []:
+                    if pv.get("seatNumber") == seat_number:
+                        validator = pv.get("amountValidator")
+                        break
+            break
+    total_price = base_price + tax_amount
+
+    # SeatPromotionCode + SeatType heuristic:
+    # "PZA" (Preferred Zone Aisle) for paid premium economy seats,
+    # "BEA" (Basic Economy?) for free economy. Not fully reverse-engineered yet,
+    # so we echo the tier's promotion if present, else default by location.
+    # TODO: when we have more captures, map this properly.
+    seat_promo_code = target_seat.get("programPricingCode") or (
+        "PZA" if target_seat.get("description") == "Preferred Zone" else ""
+    )
+    seat_type_str = target_seat.get("sellableSeatCategory") or "StandardPreferredZone"
+
+    body = {
+        "CartId": cart_id,
+        "WorkFlowType": 1,
+        "SeatAssignments": [{
+            "DepartureAirportCode": origin,
+            "ArrivalAirportCode": destination,
+            "OriginalSegmentIndex": 1,
+            "LegIndex": 0,
+            "OriginalPrice": None,
+            "SeatPrice": total_price,
+            "Currency": "USD",
+            "Seat": seat_number,
+            "SeatPromotionCode": seat_promo_code,
+            "PromotionalCouponCode": "",
+            "ProductCode": "",
+            "SeatType": seat_type_str,
+            "TravelerIndex": str(traveler_index),
+            "PersonIndex": person_index,
+            "PCUSeat": False,
+            "FlightNumber": int(flight_number),
+            "SeatPriceValidator": validator,
+            "UpgradeProductId": "",
+            "FlattenedSeatIndex": 0,
+            "DepartureDateTime": departure_datetime + (":00" if departure_datetime.count(":") < 2 else ""),
+            "MoneyAmount": total_price,
+            "MoneyCurrency": "USD",
+            "ActualSeatPrice": 0,
+            "InterlineSeatInfo": None,
+            "oldSeatInfo": {"seatNumber": "", "purchasedFopType": ""},
+            "OfferItemReferenceId": None,
+            "SeatPricing": {
+                "BaseAmount": base_price,
+                "Currency": "USD",
+                "OriginalBaseAmount": None,
+                "OriginalTaxAmount": tax_amount,
+                "SeatTaxes": [
+                    {
+                        "Amount": tax_amount,
+                        "CurrencyCode": "USD",
+                        "TaxCode": "US",
+                        "TaxName": "U.S. Transportation Tax",
+                        "TaxType": "FET",
+                        "TaxPercentage": 7.5,
+                        "TaxCurrencyDecimals": 2,
+                    },
+                ] if tax_amount else [],
+            },
+        }],
+        "SeatsToRemove": [],
+        "Characteristics": [
+            {"Code": "OBE", "Value": "True"},
+            {"Code": "IsNewSeatFlow", "Value": "True"},
+        ],
+        "Reservation": reservation_raw,
+    }
+    resp = await _authed_post("/api/ShoppingCart/RegisterSeats", body=body)
+    if resp.get("status") != 200:
+        raise RuntimeError(
+            f"RegisterSeats failed: status={resp.get('status')} "
+            f"body={(resp.get('body') or '')[:400]}"
+        )
+
+    # Build a pass[] result — one pass per seat assigned
+    return [{
+        "id": f"united-seat:{cart_id}:{flight_number}:{seat_number}",
+        "name": f"UA {flight_number}  Seat {seat_number}",
+        "status": "held",                       # → "confirmed" after checkout
+        "ticketClass": class_of_service,
+        "seatAssignment": seat_number,
+        "at": _UNITED_ORG,
+        "_cartId": cart_id,
+        "_seatPrice": total_price,
+    }]
