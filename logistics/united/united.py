@@ -371,33 +371,81 @@ def _iso_depart(local_str: str, tz_offset_hours: int | None) -> str | None:
     return f"{iso}{sign}{h:02d}:00"
 
 
-def _flight_to_shape(f: dict) -> dict:
-    """Convert United's `flight` dict into an agentOS flight-shape dict."""
-    marketing = f.get("marketingCarrier") or "UA"
-    flight_number = f.get("flightNumber") or ""
+def _segment_to_flight(seg: dict) -> dict:
+    """Convert one United flight segment (top-level or nested in
+    `connections[]`) into an agentOS `flight` shape."""
+    marketing = seg.get("marketingCarrier") or "UA"
+    flight_number = seg.get("flightNumber") or ""
+    equipment = seg.get("equipmentDisclosures") or {}
     return {
-        "id": f"{marketing}{flight_number}:{f.get('departDateTime', '')}",
+        "id": f"{marketing}{flight_number}:{seg.get('departDateTime', '')}",
         "name": f"{marketing} {flight_number}",
         "flightNumber": f"{marketing} {flight_number}",
-        "departureTime": _iso_depart(f.get("departDateTime"), f.get("orgTimezoneOffset")),
-        "arrivalTime": _iso_depart(f.get("destinationDateTime"), f.get("destTimezoneOffset")),
-        "durationMinutes": f.get("travelMinutes"),
-        "stops": len(f.get("connections") or []),
+        "departureTime": _iso_depart(seg.get("departDateTime"), seg.get("orgTimezoneOffset")),
+        "arrivalTime": _iso_depart(seg.get("destinationDateTime"), seg.get("destTimezoneOffset")),
+        "durationMinutes": seg.get("travelMinutes"),
         "airline": {
             "shape": ["organization", "airline"],
             "iataCode": marketing,
-            "name": f.get("marketingCarrierDescription") or "United Airlines",
+            "name": seg.get("marketingCarrierDescription") or "United Airlines",
             "url": "https://www.united.com" if marketing == "UA" else None,
         },
         "departsFrom": {
+            "iataCode": seg.get("origin"),
+            "name": seg.get("origin"),
+        },
+        "arrivesAt": {
+            "iataCode": seg.get("destination"),
+            "name": seg.get("destination"),
+        },
+        "aircraft": {
+            "icaoCode": equipment.get("equipmentType") or None,
+            "model": equipment.get("equipmentDescription") or None,
+        } if equipment.get("equipmentType") else None,
+    }
+
+
+def _flight_to_trip(f: dict) -> dict:
+    """Convert United's top-level `flight` (one itinerary option, possibly
+    multi-segment) into an agentOS `trip` shape with `legs: flight[]`."""
+    first = _segment_to_flight(f)
+    legs = [first]
+    for conn in f.get("connections") or []:
+        legs.append(_segment_to_flight(conn))
+
+    last_seg = (f.get("connections") or [None])[-1] or f
+    carrier = f.get("marketingCarrier") or "UA"
+    flight_numbers = "/".join(
+        f"{seg.get('marketingCarrier') or 'UA'} {seg.get('flightNumber') or '?'}"
+        for seg in [f, *(f.get("connections") or [])]
+    )
+    trip_type = "nonstop" if not (f.get("connections") or []) else f"{len(legs) - 1}-stop"
+
+    return {
+        "id": f"ua-trip:{f.get('hash') or first['id']}",
+        "name": f"{f.get('origin')}→{last_seg.get('destination')} — {flight_numbers}",
+        "tripType": trip_type,
+        "status": "offered",
+        "departureTime": _iso_depart(f.get("departDateTime"), f.get("orgTimezoneOffset")),
+        "arrivalTime": _iso_depart(last_seg.get("destinationDateTime"), last_seg.get("destTimezoneOffset")),
+        "durationMinutes": f.get("travelMinutesTotal") or f.get("travelMinutes"),
+        "stops": len(f.get("connections") or []),
+        "cabinClass": None,  # populated from the product that an offer wraps
+        "carrier": {
+            "shape": ["organization", "airline"],
+            "iataCode": carrier,
+            "name": "United Airlines",
+            "url": "https://www.united.com",
+        },
+        "origin": {
             "iataCode": f.get("origin"),
             "name": f.get("origin"),
         },
-        "arrivesAt": {
-            "iataCode": f.get("destination"),
-            "name": f.get("destination"),
-            "terminalCount": None,
+        "destination": {
+            "iataCode": last_seg.get("destination"),
+            "name": last_seg.get("destination"),
         },
+        "legs": legs,
     }
 
 
@@ -414,9 +462,10 @@ async def search_flights(
     include_basic: bool = True,
     award: bool = False,
     **params,
-) -> list[dict]:
+) -> list:
     """Search United flights. Returns an `offer[]` — one per fare bucket per
-    flight option, with the flight nested inside.
+    flight option, with a nested `trips[]` relation whose `legs[]` are the
+    individual flight segments.
 
     Outbound only; round-trip needs a second call with the chosen outbound's
     cartId passed through (not yet wired). For now, calling with `return_date`
@@ -515,13 +564,14 @@ async def search_flights(
             cart_id = e.get("cartId")
             break
 
-    # Flatten flight options × products → offers
+    # Flatten: one offer per (trip × fare product). Trip is the journey
+    # (one or more legs); the offer wraps it with a price + bookingToken.
     offers: list[dict] = []
     for e in events:
         if e.get("type") != "flightOption":
             continue
         flight = e.get("flight") or {}
-        flight_shape = _flight_to_shape(flight)
+        trip = _flight_to_trip(flight)
 
         # Walk products and their nestedProducts. Each is its own offer.
         def _emit(product: dict, parent_id: str | None = None):
@@ -529,13 +579,17 @@ async def search_flights(
             product_id = product.get("productId")
             if not product_id:
                 return
+            trip_label = trip["name"]
+            fare_label = (product.get("title") or "") + (
+                f" — {product.get('subTitle')}" if product.get("subTitle") else ""
+            )
             offers.append({
                 "id": f"united-offer:{product_id}",
-                "name": f"{flight_shape['name']} — {product.get('title') or ''}{' ' + (product.get('subTitle') or '') if product.get('subTitle') else ''}".strip(),
+                "name": f"{trip_label}  {fare_label}".strip(),
                 "price": amount,
                 "currency": currency,
                 "offerType": "award" if award else "revenue",
-                "availability": "available",
+                "availability": "available" if amount is not None else "unavailable",
                 "bookingToken": product_id,
                 "offeredBy": {
                     "shape": ["organization", "airline"],
@@ -543,16 +597,16 @@ async def search_flights(
                     "name": "United Airlines",
                     "url": "https://www.united.com",
                 },
-                # The flight this offer wraps. schema.org / NDC pattern: offer
-                # points at the deliverable (trip → flights); we use a single
-                # flight here since United slice-searches.
-                "_flight": flight_shape,
+                # Offer → Trip relation (the canonical offer shape). A trip
+                # has legs (flight[]); connecting itineraries show up
+                # naturally as multi-leg trips.
+                "trips": [{**trip, "cabinClass": (product.get("cabinType") or "").lower() or None}],
+                # Non-shape passthrough — useful for downstream tools (select,
+                # price, checkout) that need to echo United's internal ids.
                 "_fareFamily": product.get("fareFamily"),
                 "_bookingCode": product.get("bookingCode"),
-                "_cabinType": product.get("cabinType"),
                 "_productType": product.get("productType"),
                 "_cartId": cart_id,
-                "_flightNumber": flight.get("flightNumber"),
                 "_parentProductId": parent_id,
             })
             for np in product.get("nestedProducts") or []:
