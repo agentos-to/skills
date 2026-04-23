@@ -614,7 +614,7 @@ async def backend_probe(*, path: str, method: str = "GET", base: str = None,
         json_body: JSON body for writes.
         extra_headers: Extra headers.
     """
-    session = await _require_session(cookies)
+    session = await _require_session()
     user = session.get("user") or {}
     bearer = user.get("greptileToken") or ""
     if not bearer:
@@ -777,7 +777,7 @@ async def grep_page_chunks(*, page: str, patterns: list = None, context: int = 8
     for cpath in chunk_paths:
         curl = f"{DASHBOARD_BASE}{cpath}"
         try:
-            r = await client.get(curl, headers=headers, http2=False)
+            r = await client.get(curl, http2=False)
         except Exception as e:
             continue
         if r.get("status") != 200:
@@ -817,22 +817,23 @@ async def grep_page_chunks(*, page: str, patterns: list = None, context: int = 8
     }}
 
 
-@returns({"auth_keys": "array", "cookie_names": "array", "cookie_len": "integer", "cookie_header": "string"})
+@returns({"cookie_names": "array", "cookie_count": "integer", "domains": "array"})
 @connection("dashboard")
 @timeout(10)
-async def inspect_auth(*, auth: dict = None, **params) -> dict:
-    """Debug: return the engine-resolved cookie header verbatim."""
-    auth = auth or {}
-    cookies = auth.get("cookies", "") or ""
-    names = []
-    if isinstance(cookies, str) and cookies:
-        for part in cookies.split(";"):
-            p = part.strip()
-            if "=" in p:
-                names.append(p.split("=", 1)[0])
+async def inspect_auth(**params) -> dict:
+    """Debug: report what the ambient Jar is carrying for this tool call.
+
+    Reads ``client.current().jar.cookies`` — the structured Cookie records
+    the engine seeded at tool entry. No cookie values returned, only names
+    and domains, so the output is safe to paste into logs.
+    """
+    ambient = client.current()
+    jar = ambient.jar if ambient else None
+    cookies = list(jar.cookies) if jar else []
+    names = [c.name for c in cookies]
+    domains = sorted({c.domain for c in cookies})
     return {"__result__": {
-        "auth_keys": list(auth.keys()),
         "cookie_names": names,
-        "cookie_len": len(cookies) if isinstance(cookies, str) else 0,
-        "cookie_header": cookies if isinstance(cookies, str) else "",
+        "cookie_count": len(cookies),
+        "domains": domains,
     }}
