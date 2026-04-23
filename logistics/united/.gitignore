@@ -1,0 +1,4 @@
+# CDP capture artifacts from reverse-engineering sessions. Useful while
+# working on the skill, not useful in the repo — the requirements.md
+# documents the endpoints and shapes distilled from these.
+.captures/
