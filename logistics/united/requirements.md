@@ -1196,3 +1196,107 @@ After several false starts, this sequence worked end-to-end:
    the session idles out after ~5min.
 7. **`Fetch.enable` breaks SSE** — only use passive `Network.enable`
    capture. Exclude SSE endpoints from any intercept list.
+
+## Next session: capture round-trip booking (2026-04-23)
+
+Everything above is one-way. The skill stops short of checkout, and it
+only models a single `RegisterFlights` call for a single outbound
+segment. To book a round-trip we need to extend the flow.
+
+### Goal
+
+Book the round-trip AUS↔SFO Joe picked originally:
+- **Outbound** Tue Apr 28 UA 1336, 1:00 PM → 3:02 PM AUS→SFO (known, $210 Basic)
+- **Return** Sun May 3, 5:10 PM → 10:55 PM SFO→AUS (nonstop, 3h 45m — UA flight number TBD; find via fresh search)
+
+End-to-end via the skill, **using CDP to drive the UI** only where the
+HTTP replay fails. Stop short of the final checkout POST (no payment).
+
+### Start of session checklist
+
+1. `boot()` via agentOS MCP to pick up state.
+2. Verify Brave CDP: `curl -s http://127.0.0.1:9222/json`. If nothing
+   on `united.com`, navigate to `https://www.united.com/en/us` and
+   confirm login via `Network.getCookies` — `AuthCookie`, `User`, `SID`
+   must all be present. If missing, ask Joe to log in. DO NOT try
+   driving the flow while logged-out; everything 403s.
+3. `check_session` via the skill — should return `united:XX118941`.
+4. Read this file (requirements.md) tail. The Drive pattern that
+   actually worked (2026-04-23) section is the known-good UI
+   selectors.
+
+### Hypothesis A: two RegisterFlights calls with shared CartId
+
+Most airline booking APIs split the round-trip into two selection
+calls. Try this first — the skill change is small:
+
+1. `search_flights(origin=AUS, destination=SFO, depart_date=2026-04-28, return_date=2026-05-03)` — today the skill ignores `return_date`. Fix: fire one search for each slice. The search body's `Trips[]` takes one segment at a time anyway (we verified in the 2026-04-23 captures). For a round-trip session, fire search twice with `TripIndex: 1` for outbound and `TripIndex: 2` for return, sharing the `CartId` from the first search's `meta` event via `UsePassedCartId: true`.
+2. `select_flight(cart_id, booking_token=<outbound>, flight_hash=<outbound>)` — same as today, but on success don't advance to traveler page. Inspect the `DisplayCart.SearchType` field — it should be 2 for round-trip (we saw 1 for one-way).
+3. `select_flight(cart_id, booking_token=<return>, flight_hash=<return>, trip_index=2)` — NEW optional param. Probably maps to `TripIndex: 2` in the RegisterFlights body.
+4. After both slices registered, the cart should show TWO DisplayTrips with a combined GrandTotal. Then `register_traveler`, `get_seatmap` twice (once per slice), `register_seats` optionally per slice.
+
+### Hypothesis B: one RegisterFlights with two SelectedProducts
+
+Less likely but possible — the body could carry an array of
+`{ProductId, TripIndex}` entries. If Hypothesis A fails with a
+"missing slice" error, try this body shape in a one-shot Register
+call.
+
+### Falling back to CDP capture
+
+If both hypotheses fail or return confusing errors, **capture the
+real frontend round-trip flow** with the same pattern used on 2026-04-23:
+
+1. Start `python3 /tmp/united-intercept-safe.py 600 /tmp/rt-intercept.json` (or rewrite a fresh intercept script — it's <100 lines). **Exclude SSE endpoints** (FetchSSENestedFlights, SelectAndFetchSSENestedFlights) from the Fetch.enable patterns; passive Network.enable handles them.
+2. Drive via `Runtime.evaluate`:
+   - Navigate to `https://www.united.com/en/us/fsr/choose-flights?f=AUS&t=SFO&d=2026-04-28&r=2026-05-03&px=1&tt=1&taxng=1&clm=7&st=bestmatches&idx=1&mm=0` (round-trip URL already has `r=<return-date>` and `tt=1`).
+   - Wait for flight cards. The round-trip UI shows `Select flight` buttons (NOT `Select a fare`). Scope to the UA 1336 row ancestor.
+   - Click the cheapest `Select flight` → fare panel → "Basic Economy works for me" → `Select`.
+   - This transitions the URL to `idx=2` for the RETURN slice. Wait for return-flight cards, pick the 5:10 PM return, repeat the select+toggle+select dance.
+   - Record every XHR between the first and second Select click — that's the round-trip delta.
+3. Diff the captured `RegisterFlights` body for the return slice against the outbound to see the `TripIndex` / `SelectedProducts` fields.
+
+### Expected new fields / endpoints (speculative, verify on capture)
+
+- `RegisterFlights` body: `TripIndex: 2` OR top-level `SelectedProducts: [{ProductId: <return>, TripIndex: 2}]` OR new endpoint.
+- After both slices registered: URL probably jumps straight to `/traveler/` since the cart is complete.
+- `get_seatmap` may need to be called TWICE — once per segment (different `SegmentNumber`).
+- `register_traveler` is probably fine unchanged — the traveler is the same person for both legs.
+- `register_seats` needs to handle `OriginalSegmentIndex` / `LegIndex` for the return-slice seat.
+
+### Skill changes to anticipate
+
+- `search_flights`: add `return_date` handling (fire two searches, merge offers).
+- `select_flight`: add `trip_index` param (default 1); handle two-call sequences with shared CartId.
+- `select_round_trip` convenience wrapper: takes outbound_token + return_token + cart_id + hashes, does both calls in order.
+- `get_seatmap`: accept `segment_number` (already does); caller loops over segments for round-trip.
+- Possibly new `get_cart` tool that calls `LoadReservationAndCart` and returns a normalized snapshot (total, selected trips, traveler state, seats) — useful for mid-flow status checks.
+
+### Shape open question: how to model round-trip price breakdown
+
+A round-trip `reservation` has ONE grand total but two `trips[]`. Each
+leg has its own base fare; taxes often apply per-segment. The current
+reservation shape has `totalAmount`/`baseAmount`/`taxAmount` at the
+top level. For round-trip we may want `perTrip: {tripId: {base, tax, total}}`
+in `_conditions` or as a new per-trip breakdown. Don't over-engineer
+before we see the actual cart data.
+
+### Stop before payment
+
+The final `/api/ShoppingCart/checkout` or similar endpoint is
+**out of scope**. Capture it for reference but DO NOT call it. Joe
+will never put his card into this skill — if he wants to book for
+real he does it in the browser. The skill's value is everything
+up to the moment of charge.
+
+### Free seats — quick win before round-trip
+
+Joe asked: are any seats free on UA 1336? Answer from today's
+captures: **no — all available seats have a paid tier on Basic Economy
+fares.** That's United's Basic-Economy policy (tiers 8-19 are flagged
+`eligibility: "Seat selection not eligible for ELF Fare"` with
+`totalPrice: 0`, meaning "pick nothing, get assigned at check-in").
+A paid non-Basic fare (Standard Economy $260+) unlocks free seat
+selection in Main Cabin. Worth surfacing this in `get_seatmap`'s
+return — add a `freeEconomySeatsAvailable: boolean` derived by
+checking if any non-paid tier has `eligibility` matching "Eligible".
