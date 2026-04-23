@@ -77,7 +77,7 @@ def _item_matches_domain(item: dict, domain: str) -> bool:
             parts = url.parse(href)
         except Exception:
             continue
-        host = (parts.get("host") or "") if isinstance(parts, dict) else ""
+        host = getattr(parts, "host", "") or ""
         if host and _host_matches_domain(host, domain):
             return True
     return False
