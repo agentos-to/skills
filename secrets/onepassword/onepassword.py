@@ -70,13 +70,6 @@ async def _op_json(*args: str) -> Any:
         return None
 
 
-def _host_matches_domain(host: str, domain: str) -> bool:
-    """Match the cookie-style rule: suffix match on the dot-stripped domain."""
-    cd = domain.lstrip(".").lower()
-    host = host.lower()
-    return host == cd or host.endswith("." + cd)
-
-
 def _item_urls(item: dict) -> list[str]:
     urls: list[str] = []
     for u in item.get("urls") or []:
@@ -86,16 +79,64 @@ def _item_urls(item: dict) -> list[str]:
     return urls
 
 
-def _item_matches_domain(item: dict, domain: str) -> bool:
+# Scoring thresholds — items below MIN_SCORE are treated as non-matches.
+# URL match (same eTLD+1) is the strongest signal; title/tag matches act as
+# fallback for items where the user never set a comprehensive URL field.
+_URL_MATCH_SCORE = 100
+_TITLE_EXACT_SCORE = 60
+_TITLE_WORD_SCORE = 40
+_TAG_MATCH_SCORE = 25
+_MIN_SCORE = 40
+
+
+def _score_item(item: dict, domain: str) -> int:
+    """Score how well a 1Password item matches `domain`.
+
+    Combines three signals:
+      * URL host matches the domain's registrable root (eTLD+1)
+      * Item title contains the domain's root label
+      * Any item tag contains the domain's root label
+
+    Returns a score; scores >= ``_MIN_SCORE`` are real matches.
+    Tighter weighting would be more correct but also more brittle —
+    the user's vault is hand-curated and signals are noisy.
+    """
+    # Root label: "amazon" from ".amazon.com", "approach" from ".approach.app"
+    stripped = domain.strip().lstrip(".").lower()
+    if not stripped:
+        return 0
+    target = url.registrable(stripped)
+    root = target.split(".", 1)[0]
+
+    score = 0
+
+    # URL host matches — strongest signal
     for href in _item_urls(item):
         try:
             parts = url.parse(href)
         except Exception:
             continue
         host = getattr(parts, "host", "") or ""
-        if host and _host_matches_domain(host, domain):
-            return True
-    return False
+        if host and url.same_site(host, target):
+            score += _URL_MATCH_SCORE
+            break  # one URL hit is enough; don't over-score multi-URL items
+
+    # Title signal — catches items where the URL field is missing/stale
+    title_lc = (item.get("title") or "").lower()
+    if title_lc:
+        title_words = title_lc.replace("-", " ").replace("_", " ").split()
+        if title_lc == root:
+            score += _TITLE_EXACT_SCORE
+        elif root in title_words:
+            score += _TITLE_WORD_SCORE
+
+    # Tag signal — weakest
+    for tag in (item.get("tags") or []):
+        if root in tag.lower():
+            score += _TAG_MATCH_SCORE
+            break
+
+    return score
 
 
 def _field_value(item: dict, purpose: str | None = None, label: str | None = None) -> str | None:
@@ -118,20 +159,49 @@ def _field_value(item: dict, purpose: str | None = None, label: str | None = Non
     return None
 
 
-async def _find_login_item(domain: str, account: str | None) -> dict | None:
-    """Return the first Login item whose URLs match `domain`."""
+def _candidate_summary(item: dict) -> dict:
+    """Compact, secret-free summary of an item for multi-match disambiguation."""
+    return {
+        "id": item.get("id"),
+        "title": item.get("title"),
+        "username": (item.get("additional_information") or None),
+        "vault": (item.get("vault") or {}).get("name"),
+        "urls": _item_urls(item),
+    }
+
+
+async def _find_login_candidates(domain: str, account: str | None) -> list[dict]:
+    """Return Login items matching `domain`, highest-score first.
+
+    Filters to score >= ``_MIN_SCORE`` and ties cluster at the top
+    score — i.e. a URL match always ranks above a title-only match,
+    but two URL matches are both returned for the caller to
+    disambiguate via ``account``.
+
+    ``account`` narrows matches by either item title or the
+    ``additional_information`` field (which 1Password populates with
+    the username for Login items).
+    """
     items = await _op_json("item", "list", "--categories", "Login")
     if not isinstance(items, list):
-        return None
-    matching = [i for i in items if _item_matches_domain(i, domain)]
-    if not matching:
-        return None
+        return []
+    scored = [(i, _score_item(i, domain)) for i in items]
+    scored = [(i, s) for (i, s) in scored if s >= _MIN_SCORE]
+    if not scored:
+        return []
+
     if account:
-        filtered = [i for i in matching if (i.get("title") or "").lower() == account.lower()]
-        if filtered:
-            matching = filtered
-    # `op item list` returns summaries. Expand the first match to get fields.
-    return await _op_json("item", "get", matching[0]["id"])
+        acc_lc = account.lower()
+        narrowed = [
+            (i, s) for (i, s) in scored
+            if (i.get("title") or "").lower() == acc_lc
+            or (i.get("additional_information") or "").lower() == acc_lc
+        ]
+        if narrowed:
+            scored = narrowed
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [i for (i, _) in scored]
 
 
 @returns({"provided": "boolean", "identifier": "string"})
@@ -145,20 +215,53 @@ async def get_credentials(
 ) -> dict[str, Any]:
     """Match a 1Password Login item for `domain` and return `{email, password}`.
 
+    Matching combines three signals: URL host (eTLD+1 match), item
+    title contains the domain root, and tag contains the root.
+    Items with weaker signals (title-only) are returned so vault
+    entries with missing/stale URL fields still get found, but they
+    rank below exact URL matches.
+
     Args:
         domain: Canonical credential-store domain (e.g. `".approach.app"`).
-        account: Optional item-title disambiguator when multiple Login
-                 items have URLs under the same domain.
+        account: Optional disambiguator — matches on item title OR
+                 username. Used when multiple items tie on score.
     """
     try:
-        item = await _find_login_item(domain, account)
+        candidates = await _find_login_candidates(domain, account)
     except _OpLocked as e:
         return skill_error(
             f"1Password vault is locked. Unlock the 1Password desktop app or run `op signin`, then retry. ({e})",
             code="OnePasswordLocked",
             help_url="https://developer.1password.com/docs/cli/get-started/#sign-in-to-your-account",
         )
-    if item is None:
+    if not candidates:
+        return {"provided": False}
+
+    # Multi-match: if two or more items tie on the top score (e.g. two
+    # Login items with URLs for the same site), return a structured
+    # error listing candidates so the caller can retry with `account`.
+    if len(candidates) > 1:
+        top_score = _score_item(candidates[0], domain)
+        tied = [c for c in candidates if _score_item(c, domain) == top_score]
+        if len(tied) > 1:
+            return skill_error(
+                f"Multiple 1Password items match {domain!r}. "
+                f"Retry with `account=` set to one of the listed usernames or titles.",
+                code="MultipleMatches",
+                domain=domain,
+                candidates=[_candidate_summary(c) for c in tied],
+            )
+
+    # Top-scored match; expand to get field values (the list call
+    # returns summaries only).
+    try:
+        item = await _op_json("item", "get", candidates[0]["id"])
+    except _OpLocked as e:
+        return skill_error(
+            f"1Password vault locked mid-request. ({e})",
+            code="OnePasswordLocked",
+        )
+    if not isinstance(item, dict):
         return {"provided": False}
 
     username = _field_value(item, purpose="USERNAME")
