@@ -24,6 +24,7 @@ from agentos import (
     provides,
     returns,
     shell,
+    skill_error,
     skill_secret,
     url,
 )
@@ -39,14 +40,28 @@ connection(
 # ---------------------------------------------------------------------------
 
 
+class _OpLocked(Exception):
+    """Raised when `op` exits with a "not signed in / locked" error.
+
+    Distinct from a no-match result — a locked vault and an empty
+    match look identical to the caller otherwise, which is how
+    silent "provided: false" bugs slip through.
+    """
+
+
 async def _op_json(*args: str) -> Any:
     """Run `op <args> --format json` and return the parsed JSON.
 
-    Returns `None` when `op` exits non-zero — typical when the user
-    isn't signed in, the item doesn't exist, or the vault is locked.
+    Returns `None` on clean "no result" (e.g. `op item get` on an
+    unknown id). Raises `_OpLocked` when the vault is locked / the
+    session expired — callers surface that as a structured error.
     """
     result = await shell.run("op", args=list(args) + ["--format", "json"])
-    if result.get("exit_code") != 0:
+    exit_code = result.get("exit_code")
+    if exit_code != 0:
+        stderr = (result.get("stderr") or "").lower()
+        if "not currently signed in" in stderr or "session expired" in stderr or "authorization prompt dismissed" in stderr:
+            raise _OpLocked(result.get("stderr") or "op vault locked")
         return None
     stdout = result.get("stdout", "") or ""
     try:
@@ -135,7 +150,14 @@ async def get_credentials(
         account: Optional item-title disambiguator when multiple Login
                  items have URLs under the same domain.
     """
-    item = await _find_login_item(domain, account)
+    try:
+        item = await _find_login_item(domain, account)
+    except _OpLocked as e:
+        return skill_error(
+            f"1Password vault is locked. Unlock the 1Password desktop app or run `op signin`, then retry. ({e})",
+            code="OnePasswordLocked",
+            help_url="https://developer.1password.com/docs/cli/get-started/#sign-in-to-your-account",
+        )
     if item is None:
         return {"provided": False}
 
@@ -181,7 +203,14 @@ async def get_api_key(
         account: Optional item-title disambiguator when multiple API
                  Credential items exist for the same service.
     """
-    items = await _op_json("item", "list", "--categories", "API Credential")
+    try:
+        items = await _op_json("item", "list", "--categories", "API Credential")
+    except _OpLocked as e:
+        return skill_error(
+            f"1Password vault is locked. Unlock the 1Password desktop app or run `op signin`, then retry. ({e})",
+            code="OnePasswordLocked",
+            help_url="https://developer.1password.com/docs/cli/get-started/#sign-in-to-your-account",
+        )
     if not isinstance(items, list):
         return {"provided": False}
     matching = [i for i in items if service.lower() in (i.get("title") or "").lower()]
@@ -192,7 +221,13 @@ async def get_api_key(
     if not matching:
         return {"provided": False}
 
-    item = await _op_json("item", "get", matching[0]["id"])
+    try:
+        item = await _op_json("item", "get", matching[0]["id"])
+    except _OpLocked as e:
+        return skill_error(
+            f"1Password vault locked mid-request. ({e})",
+            code="OnePasswordLocked",
+        )
     if not isinstance(item, dict):
         return {"provided": False}
     key_value = _field_value(item, label="credential") or _field_value(item, purpose="NOTES")
