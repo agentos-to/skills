@@ -1524,92 +1524,196 @@ async def render_seatmap(
         class_of_service=class_of_service, fare_basis_code=fare_basis_code,
     )
 
-    tiers = {t["id"]: t for t in sm.get("tiers") or []}
+    tiers_map = {t["id"]: t for t in sm.get("tiers") or []}
+
+    # Collect every cabin's rows + monument rows into ONE vertical sequence,
+    # sorted by verticalGridNumber so First cabin stays forward of Economy
+    # etc. We render a single continuous fuselage, with a thin band between
+    # cabins to mark the section change.
+    class_sections: list[dict] = []
+    all_entries: list[tuple] = []  # (kind, vgn, payload, cabin_index)
+    for ci, cabin in enumerate(sm.get("cabins") or []):
+        class_sections.append({
+            "index": ci,
+            "brand": cabin.get("cabinBrand") or "",
+            "layout": cabin.get("layout") or "",
+            "available": cabin.get("availableSeats") or 0,
+            "total": cabin.get("totalSeats") or 0,
+        })
+        for r in cabin.get("rows") or []:
+            all_entries.append(("row", r.get("verticalGridNumber") or 0, r, ci))
+        for m in cabin.get("monumentRows") or []:
+            all_entries.append(("mon", m.get("verticalGridNumber") or 0, m, ci))
+    all_entries.sort(key=lambda e: (e[3], e[1]))
+
+    # Inner width the fuselage needs — must fit the widest row of any cabin.
+    # Each seat is 3 chars wide (" X "), separated by spaces; an aisle is
+    # a 3-wide gap ("   |   " style). We'll draw with a fixed column budget.
+    #
+    # For a 737: "ABC DEF" has 6 letter columns + 1 aisle = 7 columns.
+    # Each seat cell = 3 chars; each seat gap = 1 char; aisle gap = 3 chars.
+    # Row number sits in the aisle (3 chars). Extra label outside the right
+    # fuselage wall shows "WING"/"EXIT" etc.
+    max_columns = 0
+    for cabin in sm.get("cabins") or []:
+        cols = sum(len(g) for g in (cabin.get("layout") or "").split(" "))
+        if cols > max_columns:
+            max_columns = cols
+    max_columns = max(max_columns, 6)  # min 6 for 3-3 layout
+
+    # Inner-width budget: max_columns seat cells * 3 chars + (max_columns-1)
+    # single-space gaps. For aisle we replace the gap with a 3-char row-number
+    # slot. Worst case: "ABC DEF" → 6 seats + 5 gaps + 2 aisle-wide → that's
+    # 6*3 + 5 + 2 = 25 chars inner. We just pick 25 and pad from there.
+    INNER = 31  # gives breathing room for "║", " ", seats, row-number, seats, " ║"
+
+    def _seat_cell(s: dict | None) -> str:
+        if s is None:
+            return "   "
+        if s.get("itemType") == "MONUMENT":
+            return "▓▓▓"
+        if s.get("isBlocked") or s.get("isPermanentBlocked"):
+            return "███"
+        if s.get("isAvailable"):
+            tier = int(s.get("tier") or 0)
+            price = (tiers_map.get(tier) or {}).get("price") or 0
+            if price > 0:
+                # Show the price tier digit inside the seat so the user can
+                # relate a seat to the price list. Fall back to $ if unknown.
+                return f" ${tier}" if tier < 10 else " $ "
+            return " ○ "
+        return " ✕ "
+
+    def _row_line(row: dict, layout: str) -> tuple[str, str]:
+        """Return (interior, right_label) for a row. interior is the
+        seats-plus-row-number body (without the fuselage walls). right_label
+        is stuff to draw OUTSIDE the fuselage (WING / EXIT marker)."""
+        groups = layout.split(" ")
+        sl = {
+            s.get("letter"): s
+            for s in (row.get("seats") or [])
+            if s.get("itemType") != "MONUMENT"
+        }
+        # Build each group of seats
+        group_strs: list[str] = []
+        for g in groups:
+            parts = []
+            for i, letter in enumerate(list(g)):
+                parts.append(_seat_cell(sl.get(letter)))
+            group_strs.append(" ".join(parts))
+
+        # Join groups with the row-number slot in the middle aisle
+        rn = str(row.get("number") or "")
+        aisle_slot = f" {rn:^3} "
+        interior = aisle_slot.join(group_strs)
+
+        # Right-side label (outside the wall)
+        labels = []
+        if row.get("wing"):
+            labels.append("wing")
+        if any(s.get("isExit") for s in row.get("seats") or []):
+            labels.append("exit-row")
+        if any(s.get("isBulkhead") for s in row.get("seats") or []):
+            labels.append("bulkhead")
+        right_label = " ←  " + ", ".join(labels) if labels else ""
+        return interior, right_label
+
+    def _pad(inner: str) -> str:
+        """Center `inner` within INNER chars."""
+        return inner.center(INNER)
+
+    # Build the drawing row-by-row.
+    # Row body width (what sits inside the walls) = INNER. A seat row prints
+    # as:  "│ " + padded_interior(INNER) + " │"  → total width INNER + 4.
+    # With "│▐" / "▌│" on exit rows the outer width stays the same.
+    TUBE_OUTER = INNER + 4    # "│ " + INNER + " │"
     lines: list[str] = []
+    # Header above the plane
     lines.append(
         f"✈  {sm.get('flightNumber')}  "
-        f"{sm.get('origin')}→{sm.get('destination')}  "
-        f"{sm.get('departureTime')}  aircraft {sm.get('aircraftCode')}"
+        f"{sm.get('origin')} → {sm.get('destination')}  "
+        f"{(sm.get('departureTime') or '').replace('T',' ')}  "
+        f"aircraft {sm.get('aircraftCode')}"
     )
     lines.append("")
 
-    for cabin in sm.get("cabins") or []:
-        layout = cabin.get("layout", "")
-        groups = layout.split(" ")
-        hdr = " │ ".join(["  ".join(list(g)) for g in groups])
-        avail = cabin.get("availableSeats", 0)
-        total = cabin.get("totalSeats", 0)
-        lines.append(
-            f"╔══  {cabin.get('cabinBrand')}  ({avail}/{total} avail, layout {layout})"
-        )
-        lines.append(f"║  ROW    {hdr}    NOTES")
+    # Top cap: a flat box. No nose/tail cone.
+    lines.append("┌" + "─" * (TUBE_OUTER - 2) + "┐")
+    # Cabin-brand banner row, centered inside the tube
+    first_brand = class_sections[0]["brand"] if class_sections else ""
+    lines.append("│ " + _pad(first_brand) + " │")
+    # Column-letter header for the first cabin
+    first_layout = class_sections[0]["layout"] if class_sections else ""
+    if first_layout:
+        groups = first_layout.split(" ")
+        group_strs = []
+        for g in groups:
+            parts = [f" {letter} " for letter in list(g)]
+            group_strs.append(" ".join(parts))
+        header_inner = "     ".join(group_strs)   # wider aisle slot for the header
+        lines.append("│ " + _pad(header_inner) + " │")
+    lines.append("│ " + _pad("") + " │")
 
-        # Merge rows + monumentRows by verticalGridNumber
-        entries = []
-        for r in cabin.get("rows") or []:
-            entries.append(("row", r.get("verticalGridNumber") or 0, r))
-        for m in cabin.get("monumentRows") or []:
-            entries.append(("mon", m.get("verticalGridNumber") or 0, m))
-        entries.sort(key=lambda e: e[1])
+    # Walk the merged entries and draw row-by-row
+    current_cabin = 0
+    for kind, vgn, payload, cabin_idx in all_entries:
+        # Cabin transition? Draw a cabin-divider band.
+        if cabin_idx != current_cabin:
+            lines.append("│ " + _pad("— — — — — — — — — — — —") + " │")
+            new_brand = class_sections[cabin_idx]["brand"]
+            lines.append("│ " + _pad(new_brand) + " │")
+            new_layout = class_sections[cabin_idx]["layout"]
+            if new_layout:
+                groups = new_layout.split(" ")
+                group_strs = []
+                for g in groups:
+                    parts = [f" {letter} " for letter in list(g)]
+                    group_strs.append(" ".join(parts))
+                header_inner = "     ".join(group_strs)
+                lines.append("│ " + _pad(header_inner) + " │")
+            lines.append("│ " + _pad("") + " │")
+            current_cabin = cabin_idx
 
-        for kind, grid, payload in entries:
-            if kind == "mon":
-                monuments = payload.get("monuments") or []
-                types = {m.get("itemType") for m in monuments}
-                has_exit = any(m.get("isDoorExit") for m in monuments)
-                if has_exit:
-                    lines.append("║  ░░░    ═══════  DOOR / EXIT  ═══════")
-                elif "LAV" in types:
-                    lines.append("║  ░░░    ━━━━━━━  LAVATORY      ━━━━━━━")
-                elif "GALLEY" in types:
-                    lines.append("║  ░░░    ━━━━━━━  GALLEY        ━━━━━━━")
-                continue
-            row = payload
-            sl = {
-                s.get("letter"): s
-                for s in (row.get("seats") or [])
-                if s.get("itemType") != "MONUMENT"
-            }
-            row_flags = []
-            if row.get("wing"):
-                row_flags.append("WING")
-            if any(s.get("isExit") for s in row.get("seats") or []):
-                row_flags.append("EXIT-ROW")
-            if any(s.get("isBulkhead") for s in row.get("seats") or []):
-                row_flags.append("BULKHEAD")
-            parts = []
-            for g in groups:
-                cells = []
-                for letter in list(g):
-                    s = sl.get(letter)
-                    if not s:
-                        cells.append(" · ")
-                    elif s.get("itemType") == "MONUMENT":
-                        cells.append(" ▓ ")
-                    elif s.get("isBlocked") or s.get("isPermanentBlocked"):
-                        cells.append(" █ ")
-                    elif s.get("isAvailable"):
-                        tier = int(s.get("tier") or 0)
-                        price = (tiers.get(tier) or {}).get("price") or 0
-                        cells.append(" $ " if price > 0 else " ○ ")
-                    else:
-                        cells.append(" ✕ ")
-                parts.append(" ".join(cells))
-            note = ("  ← " + ", ".join(row_flags)) if row_flags else ""
-            lines.append(f"║  {row.get('number'):>3}     " + " │ ".join(parts) + note)
-        lines.append("╚" + "═" * 60)
-        lines.append("")
+        if kind == "mon":
+            monuments = payload.get("monuments") or []
+            types = {m.get("itemType") for m in monuments}
+            has_exit = any(m.get("isDoorExit") for m in monuments)
+            if has_exit:
+                # Draw a row with red exit markers OUTSIDE the fuselage wall
+                lines.append("│▐" + _pad("═ ═ ═  DOOR/EXIT  ═ ═ ═") + "▌│")
+            elif "LAV" in types:
+                lines.append("│ " + _pad("⊟  LAVATORY  ⊟") + " │")
+            elif "GALLEY" in types:
+                lines.append("│ " + _pad("▒  GALLEY  ▒") + " │")
+            continue
 
-    legend_parts = [
-        "○ = free avail", "$ = paid avail", "✕ = occupied",
-        "█ = blocked", "▓ = monument", "· = no seat",
+        # Seat row
+        row = payload
+        cabin = (sm.get("cabins") or [])[cabin_idx]
+        interior, right_label = _row_line(row, cabin.get("layout") or "")
+        padded = _pad(interior)
+        # For exit-row rows, draw small red "▐" / "▌" on the wall edge
+        is_exit_row = any(s.get("isExit") for s in row.get("seats") or [])
+        left_wall = "│▐" if is_exit_row else "│ "
+        right_wall = "▌│" if is_exit_row else " │"
+        lines.append(left_wall + padded + right_wall + right_label)
+
+    # Bottom cap: flat box.
+    lines.append("└" + "─" * (TUBE_OUTER - 2) + "┘")
+
+    # Legend
+    legend_bits = [
+        "○ free", "$N paid (tier N)", "✕ occupied",
+        "█ blocked", "▓ monument",
     ]
-    legend = "Legend:  " + "   ".join(legend_parts)
+    legend = "Legend:  " + "   ·   ".join(legend_bits)
     if sm.get("tiers"):
         legend += "\n\nPricing tiers:\n"
-        for tid, t in sorted(tiers.items()):
+        for tid, t in sorted(tiers_map.items()):
             price = t.get("price") or 0
             if price > 0:
                 legend += f"  tier {tid}: ${price:.2f}\n"
+    if sm.get("basicEconomyLocked"):
+        legend += "\n⚠ Basic Economy fare: seat selection is not purchasable on this ticket.\n"
 
     return {"ascii": "\n".join(lines), "legend": legend}
