@@ -951,13 +951,13 @@ async def get_profile(*, user_id: str = "", limit: int = 10, **params) -> dict[s
     """Get a public Goodreads profile and import bounded public relationships like favorite books, currently reading, and shelves
 
         Args:
-            user_id: User ID (e.g., '26631647')
+            user_id: User ID (e.g., '27117656')
             limit: Max related books or shelves to import per profile section
         """
     return await _get_public_profile(user_id=str(user_id), limit=int(limit))
 
 
-@test(params={'book_id': '4934'}, account='26631647')
+@test(params={'book_id': '4934'})
 @returns("book")
 @provides(web_read, urls=["goodreads.com/book/show/*", "www.goodreads.com/book/show/*"])
 @connection("graphql")
@@ -975,7 +975,7 @@ async def get_book(*, book_id: str = "", url: str = "", **params) -> dict[str, A
     return await _get_public_book(str(book_id))
 
 
-@test(params={'book_id': '4934', 'limit': 5}, account='26631647')
+@test(params={'book_id': '4934', 'limit': 5})
 @returns("review[]")
 @connection("graphql")
 async def list_book_reviews(*, book_id: str = "", limit: int = 30, **params) -> Any:
@@ -988,7 +988,7 @@ async def list_book_reviews(*, book_id: str = "", limit: int = 30, **params) -> 
     return await _list_book_reviews(book_id=str(book_id), limit=int(limit))
 
 
-@test(params={'book_id': '4934', 'limit': 5}, account='26631647')
+@test(params={'book_id': '4934', 'limit': 5})
 @returns("book[]")
 @connection("graphql")
 async def list_similar_books(*, book_id: str = "", limit: int = 20, **params) -> Any:
@@ -1001,7 +1001,7 @@ async def list_similar_books(*, book_id: str = "", limit: int = 20, **params) ->
     return await _list_similar_books(book_id=str(book_id), limit=int(limit))
 
 
-@test(params={'book_id': '4934', 'limit': 5}, account='26631647')
+@test(params={'book_id': '4934', 'limit': 5})
 @returns("book[]")
 @connection("graphql")
 async def list_series_books(*, book_id: str = "", limit: int = 20, **params) -> Any:
@@ -1014,7 +1014,7 @@ async def list_series_books(*, book_id: str = "", limit: int = 20, **params) -> 
     return await _list_series_books(book_id=str(book_id), limit=int(limit))
 
 
-@test(params={'query': 'Brothers Karamazov', 'limit': 3}, account='26631647')
+@test(params={'query': 'Brothers Karamazov', 'limit': 3})
 @returns("book[]")
 @connection("graphql")
 @timeout(15)
@@ -1028,7 +1028,7 @@ async def search_books(*, query: str = "", limit: int = 10, **params) -> Any:
     return await _search_books(query=str(query), limit=int(limit))
 
 
-@test(params={'author_id': '3137322', 'limit': 3}, account='26631647')
+@test(params={'author_id': '3137322', 'limit': 3})
 @returns("person")
 @provides(web_read, urls=["goodreads.com/author/show/*", "www.goodreads.com/author/show/*"])
 @connection("graphql")
@@ -1050,7 +1050,7 @@ async def get_author(*, author_id: str = "", url: str = "", limit: int = 10, **p
     return await _get_public_author(author_id=str(author_id), limit=int(limit))
 
 
-@test(params={'author_id': '3137322', 'limit': 3}, account='26631647')
+@test(params={'author_id': '3137322', 'limit': 3})
 @returns("book[]")
 @connection("graphql")
 async def list_author_books(*, author_id: str = "", limit: int = 10, **params) -> list[dict[str, Any]]:

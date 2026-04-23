@@ -10,7 +10,22 @@ Separate from public_graph.py which handles public GraphQL/Apollo data.
 import re
 from typing import Any
 
-from agentos import claims, client, connection, email_lookup, molt, parse_date, parse_int, provides, returns, test, timeout, url
+from agentos import (
+    claims,
+    client,
+    connection,
+    email_lookup,
+    molt,
+    normalize_email,
+    normalize_handle,
+    parse_date,
+    parse_int,
+    provides,
+    returns,
+    test,
+    timeout,
+    url,
+)
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -121,7 +136,7 @@ def _p(d: dict, key: str, default: Any = None) -> Any:
 # ---------------------------------------------------------------------------
 
 
-_GOODREADS = {"shape": "product", "url": "https://goodreads.com", "name": "Goodreads"}
+_GOODREADS = {"shape": "organization", "url": "https://goodreads.com", "name": "Goodreads"}
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -130,41 +145,70 @@ _GOODREADS = {"shape": "product", "url": "https://goodreads.com", "name": "Goodr
 @connection("web")
 @timeout(15)
 async def check_session(**params) -> dict[str, Any]:
-    """Verify Goodreads session and identify the logged-in user.
+    """Verify Goodreads session and identify the logged-in user by email.
 
-    Fetches the Goodreads homepage with cookies and extracts the logged-in
-    user's ID and name from the navigation HTML.
+    Identity is keyed on the account email scraped from `/user/edit` (the
+    profile settings page, reachable only when the session cookies are
+    valid). Scrapes the navigation HTML first for the numeric user id and
+    slug, then follows up with `/user/edit` for the canonical email.
     """
 
     resp = await client.get(BASE)
     if resp["status"] != 200:
-        return {"authenticated": False, "statusCode": resp["status"]}
+        return {"authenticated": False}
 
     body = resp["body"]
 
-    # Redirect to sign-in means cookies are invalid
+    # Redirect to sign-in means cookies are invalid.
     if "/user/sign_in" in str(resp["url"]):
-        return {"authenticated": False, "redirect": str(resp["url"])}
+        return {"authenticated": False}
 
-    # Extract user ID from profile link: /user/show/12345-name
     user_id_match = re.search(r'/user/show/(\d+)', body)
-    # Extract display name from URL slug: /user/show/12345-first-last
-    name = ""
-    slug_match = re.search(r'/user/show/\d+-([^"&?/]+)', body)
-    if slug_match:
-        name = slug_match.group(1).replace("-", " ").strip().title()
-
     user_id = user_id_match.group(1) if user_id_match else ""
 
-    if user_id:
-        return {
-            "authenticated": True,
-            "at": _GOODREADS,
-            "identifier": user_id,
-            "display": name,
-        }
+    # Slug: /user/show/12345-first-last  →  "first-last"
+    slug = ""
+    display_name = ""
+    slug_match = re.search(r'/user/show/\d+-([^"&?/]+)', body)
+    if slug_match:
+        slug = slug_match.group(1)
+        display_name = slug.replace("-", " ").strip().title()
 
-    return {"authenticated": False}
+    if not user_id:
+        return {"authenticated": False}
+
+    # /user/edit renders the canonical account email inside an `<em>` tag
+    # on the "Alert emails will be sent to <em>...</em>" notice. Reachable
+    # only when session cookies are valid — anonymous visitors are
+    # redirected to /user/sign_in long before this markup appears.
+    edit_resp = await client.get(f"{BASE}/user/edit")
+    email = ""
+    if edit_resp["status"] == 200:
+        em = re.search(
+            r'Alert emails will be sent to\s*<em>\s*([^<\s]+@[^<\s]+)\s*</em>',
+            edit_resp["body"],
+        )
+        if em:
+            email = em.group(1)
+
+    # Email is the canonical identifier per the account-check protocol.
+    # Without it there's no durable way to address the account row.
+    if not email:
+        return {"authenticated": False}
+
+    canonical = normalize_email(email)
+    result: dict[str, Any] = {
+        "authenticated": True,
+        "at": _GOODREADS,
+        "identifier": canonical,
+        "email": canonical,
+        "userId": user_id,
+    }
+    if slug:
+        result["handle"] = normalize_handle(slug)
+    if display_name:
+        result["displayName"] = display_name
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +216,7 @@ async def check_session(**params) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@test(params={'user_id': '26631647'}, account='26631647')
+@test
 @returns("person")
 @connection("web")
 @timeout(15)
@@ -180,9 +224,9 @@ async def get_person(*, user_id: str = "", **params) -> dict[str, Any]:
     """Get a rich person profile from Goodreads — demographics, stats, favorite books, genres, currently reading
 
         Args:
-            user_id: User ID (e.g., '27117656')
+            user_id: User ID (e.g., '27117656'). Omit to use the logged-in user.
         """
-    return await _get_person(user_id=str(user_id), params=params)
+    return await _get_person(user_id=await _resolve_user_id(user_id, params), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -199,13 +243,32 @@ async def search_people(*, query: str = "", limit: int = 10, **params) -> list[d
     return await _search_people(query=query, limit=int(limit), params=params)
 
 
-def _resolve_user_id(user_id: str, params: dict) -> str:
-    """Resolve user_id: explicit param → auth.identifier from check_session."""
+async def _resolve_user_id(user_id: str, params: dict) -> str:
+    """Resolve user_id from an explicit param or the authed session.
+
+    - Explicit `user_id` wins.
+    - Legacy numeric `auth.identifier` (pre-email cutover) wins next —
+      avoids an extra round trip when the credential store still keys on
+      the user_id directly.
+    - Otherwise scrape the home page's nav for `/user/show/<id>`. One
+      GET; shares the ambient Jar that `client` already set up.
+    """
     uid = str(user_id).strip() if user_id else ""
     if not uid:
-        uid = (params.get("auth") or {}).get("identifier", "")
+        auth = params.get("auth") or {}
+        legacy = str(auth.get("identifier") or "").strip()
+        if legacy.isdigit():
+            return legacy
+        resp = await client.get(BASE)
+        if resp["status"] == 200:
+            m = re.search(r'/user/show/(\d+)', resp["body"])
+            if m:
+                return m.group(1)
     if not uid:
-        raise ValueError("user_id required — provide it or ensure check_session has run")
+        raise ValueError(
+            "user_id required — pass it explicitly, or make sure the "
+            "Goodreads session is authed so the home page exposes it."
+        )
     return uid
 
 
@@ -220,7 +283,7 @@ async def list_friends(*, user_id: str = "", page: int = 0, **params) -> list[di
             user_id: User ID
             page: Page number (0 = all pages, 30 per page)
         """
-    return await _list_friends(user_id=_resolve_user_id(user_id, params), page=int(page), params=params)
+    return await _list_friends(user_id=await _resolve_user_id(user_id, params), page=int(page), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -236,7 +299,7 @@ async def list_books(*, user_id: str = "", shelf: str = "all", sort: str = "date
             sort: Sort by: date_added, rating, title, author
             page: Page number (0 = all pages, 25 per page)
         """
-    return await _list_books(user_id=_resolve_user_id(user_id, params), shelf=str(shelf), sort=str(sort), page=int(page), params=params)
+    return await _list_books(user_id=await _resolve_user_id(user_id, params), shelf=str(shelf), sort=str(sort), page=int(page), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -251,7 +314,7 @@ async def list_reviews(*, user_id: str = "", sort: str = "date", page: int = 0, 
             sort: Sort by: date, rating, title
             page: Page number (0 = all pages, 25 per page)
         """
-    return await _list_reviews(user_id=_resolve_user_id(user_id, params), sort=str(sort), page=int(page), params=params)
+    return await _list_reviews(user_id=await _resolve_user_id(user_id, params), sort=str(sort), page=int(page), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -264,7 +327,7 @@ async def list_shelves(*, user_id: str = "", **params) -> list[dict[str, Any]]:
         Args:
             user_id: User ID
         """
-    return await _list_shelves(user_id=_resolve_user_id(user_id, params), params=params)
+    return await _list_shelves(user_id=await _resolve_user_id(user_id, params), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -279,7 +342,7 @@ async def list_shelf_books(*, user_id: str = "", shelf_name: str = "", page: int
             shelf_name: Shelf name (e.g., 'read', 'currently-reading', 'to-read')
             page: Page number (0 = all pages, 25 per page)
         """
-    return await _list_shelf_books(user_id=_resolve_user_id(user_id, params), shelf_name=str(shelf_name), page=int(page), params=params)
+    return await _list_shelf_books(user_id=await _resolve_user_id(user_id, params), shelf_name=str(shelf_name), page=int(page), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -314,7 +377,7 @@ async def list_following(*, user_id: str = "", **params) -> list[dict[str, Any]]
         Args:
             user_id: User ID
         """
-    return await _list_following(user_id=_resolve_user_id(user_id, params), params=params)
+    return await _list_following(user_id=await _resolve_user_id(user_id, params), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -327,7 +390,7 @@ async def list_followers(*, user_id: str = "", **params) -> list[dict[str, Any]]
         Args:
             user_id: User ID
         """
-    return await _list_followers(user_id=_resolve_user_id(user_id, params), params=params)
+    return await _list_followers(user_id=await _resolve_user_id(user_id, params), params=params)
 
 
 @test.skip(reason='destructive or unsupported — migrated from yaml')
@@ -340,7 +403,7 @@ async def list_quotes(*, user_id: str = "", **params) -> list[dict[str, Any]]:
         Args:
             user_id: User ID
         """
-    return await _list_quotes(user_id=_resolve_user_id(user_id, params), params=params)
+    return await _list_quotes(user_id=await _resolve_user_id(user_id, params), params=params)
 
 
 # ---------------------------------------------------------------------------
@@ -542,8 +605,6 @@ async def _get_person(
         "website": molt(website),
         "about": molt(about),
         "interests": molt(interests),
-        "joinedDate": joined_date,
-        "lastActive": last_active,
         "ratingsCount": ratings_count,
         "avgRating": avg_rating,
         "reviewsCount": reviews_count,
@@ -552,9 +613,14 @@ async def _get_person(
         "accounts": [{
             "id": uid,
             "name": name,
+            "issuer": "goodreads.com",
+            "identifier": handle or uid,
             "handle": handle,
+            "displayName": name,
             "u": f"{BASE}/user/show/{uid}",
             "image": photo_url,
+            "joinedDate": joined_date,
+            "lastActive": last_active,
         }],
     }
     if favorite_books:

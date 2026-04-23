@@ -67,11 +67,11 @@ All operations return data mapped to standard AgentOS entities:
 
 ```bash
 # Get your profile
-run({ skill: "goodreads", tool: "get_profile", params: { user_id: "26631647" } })
+run({ skill: "goodreads", tool: "get_profile", params: { user_id: "<your-goodreads-user-id>" } })
 
 # List books you're currently reading
 run({ skill: "goodreads", tool: "list_books", 
-  params: { user_id: "26631647", shelf: "currently-reading", sort: "date_added" } })
+  params: { user_id: "<your-goodreads-user-id>", shelf: "currently-reading", sort: "date_added" } })
 
 # Search for a book
 run({ skill: "goodreads", tool: "search_books", 
@@ -90,18 +90,18 @@ run({ skill: "goodreads", tool: "list_similar_books",
 
 # View your reviews
 run({ skill: "goodreads", tool: "list_reviews", 
-  params: { user_id: "26631647", sort: "date" } })
+  params: { user_id: "<your-goodreads-user-id>", sort: "date" } })
 
 # Find users
 run({ skill: "goodreads", tool: "search_people", 
   params: { query: "Malcolm Gladwell", limit: 5 } })
 
 # List your custom shelves
-run({ skill: "goodreads", tool: "list_shelves", params: { user_id: "26631647" } })
+run({ skill: "goodreads", tool: "list_shelves", params: { user_id: "<your-goodreads-user-id>" } })
 
 # Get books on a specific shelf
 run({ skill: "goodreads", tool: "list_shelf_books",
-  params: { user_id: "26631647", shelf_name: "philosophy" } })
+  params: { user_id: "<your-goodreads-user-id>", shelf_name: "philosophy" } })
 ```
 
 ## Technical Details
@@ -192,13 +192,3 @@ This makes a mixed reverse-engineering approach the most reliable path today:
 - JS bundle extraction for transport config (endpoint, API key)
 - authenticated cookie-backed expansion for private shelves, feed, and social views
 
-## TODO
-
-- Account registration by email identity (not numeric ID). Today the
-  engine registers Goodreads cookies under the scraped user_id
-  (`26631647`) or `default` when the ID isn't visible. Should key on
-  the logged-in email (`goodreads@contini.co`), resolved via
-  `check_session`. Blocks making `test:` params hardcode-free.
-- `@test` decorator in the SDK to replace the readme `test:` block.
-  AST-read, same surface, no runtime import. Covers this skill and
-  macos-control as the migration reference.

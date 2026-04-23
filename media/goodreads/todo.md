@@ -37,13 +37,6 @@ to-read; `list_books` returns 0 for every shelf. HTML dumped to
 
 ## Open work
 
-This skill's remaining friction is now captured as engine-level projects
-in `core/_projects/p2/`:
-
-- **accounts-by-email** — replace numeric `26631647` + `default`
-  fallback with `goodreads@contini.co`.
-- **test-decorator** — move `test:` YAML into Python `@test`. Unblocks
-  `from_account()` and kills the string-key drift that broke this skill.
 - **connections-as-http-clients** — move `waf/mode/accept` off call
   sites into a `client:` profile on the connection. Deletes the
   conditional in `_fetch_url`.
@@ -52,48 +45,7 @@ in `core/_projects/p2/`:
 - **unified-quality-runner** — merge `quality run` + `run_tests.py` into
   one command, one JSONL row.
 
-Goodreads is pilot #1 for every one of those.
-
-### `@test` decorator (snapshot of intent)
-
-**Today.** Tests in `readme.md` frontmatter. YAML key must match the
-Python function name exactly — the `run_` rename bug.
-
-**Target.**
-
-```python
-@test(user_id=from_account())
-@returns("person")
-@connection("graphql")
-async def get_person(*, user_id, **params): ...
-```
-
-AST-read by the SDK (same path as `@returns`, `@provides`). No
-runtime import — engine parses the source as text. Multi-case form:
-
-```python
-@test.cases(
-    {"params": {"book_id": "4934"}},
-    {"params": {"book_id": "5107"}},
-)
-```
-
-Skip form:
-
-```python
-@test.skip(reason="destructive — creates a review")
-```
-
-**Migration plan.** Pilot on Goodreads + macos-control (two existing
-skills with `test:` blocks). Runner learns a second source: prefer
-Python `@test` if present, fall back to readme `test:` for any skill
-not yet migrated. Lets skills migrate one at a time.
-
-**Why deferred.** Goodreads fix came first because the engine
-already worked for the readme-based form; needed to stop the
-bleeding before changing the declaration site.
-
-### 3. Login/signup flow from empty state
+### Login/signup flow from empty state
 
 Joe raised this. **Recommendation: don't build it.** Goodreads
 sign-in has CloudFront WAF + invisible reCAPTCHA; building password
@@ -193,7 +145,7 @@ skills/agent-sdk validate skills/media/goodreads
 
 # one tool
 /Users/joe/dev/agentos/core/target/debug/agentos call run \
-  '{"skill":"goodreads","tool":"get_book","params":{"book_id":"4934"},"account":"26631647"}'
+  '{"skill":"goodreads","tool":"get_book","params":{"book_id":"4934"}}'
 
 # sweep
 cd _quality && bin/quality run
