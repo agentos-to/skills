@@ -1492,3 +1492,124 @@ async def register_seats(
         "_cartId": cart_id,
         "_seatPrice": total_price,
     }]
+
+
+@returns({"ascii": "string", "legend": "string"})
+@connection("web")
+@timeout(30)
+async def render_seatmap(
+    *,
+    cart_id: str,
+    flight_number: int,
+    origin: str,
+    destination: str,
+    departure_datetime: str,
+    arrival_datetime: str,
+    class_of_service: str = "N",
+    fare_basis_code: str = "",
+    **params,
+) -> dict:
+    """Render an ASCII cabin chart for a flight. Calls get_seatmap under the
+    hood and formats the output for display.
+
+    Returns {"ascii": <multi-line string>, "legend": <legend string>}. The
+    string has rows, seats (○ free, $ paid, ✕ occupied, █ blocked), aisle
+    gaps between letter groups, and rule-lines for galleys / lavatories /
+    exits.
+    """
+    sm = await get_seatmap(
+        cart_id=cart_id, flight_number=flight_number,
+        origin=origin, destination=destination,
+        departure_datetime=departure_datetime, arrival_datetime=arrival_datetime,
+        class_of_service=class_of_service, fare_basis_code=fare_basis_code,
+    )
+
+    tiers = {t["id"]: t for t in sm.get("tiers") or []}
+    lines: list[str] = []
+    lines.append(
+        f"✈  {sm.get('flightNumber')}  "
+        f"{sm.get('origin')}→{sm.get('destination')}  "
+        f"{sm.get('departureTime')}  aircraft {sm.get('aircraftCode')}"
+    )
+    lines.append("")
+
+    for cabin in sm.get("cabins") or []:
+        layout = cabin.get("layout", "")
+        groups = layout.split(" ")
+        hdr = " │ ".join(["  ".join(list(g)) for g in groups])
+        avail = cabin.get("availableSeats", 0)
+        total = cabin.get("totalSeats", 0)
+        lines.append(
+            f"╔══  {cabin.get('cabinBrand')}  ({avail}/{total} avail, layout {layout})"
+        )
+        lines.append(f"║  ROW    {hdr}    NOTES")
+
+        # Merge rows + monumentRows by verticalGridNumber
+        entries = []
+        for r in cabin.get("rows") or []:
+            entries.append(("row", r.get("verticalGridNumber") or 0, r))
+        for m in cabin.get("monumentRows") or []:
+            entries.append(("mon", m.get("verticalGridNumber") or 0, m))
+        entries.sort(key=lambda e: e[1])
+
+        for kind, grid, payload in entries:
+            if kind == "mon":
+                monuments = payload.get("monuments") or []
+                types = {m.get("itemType") for m in monuments}
+                has_exit = any(m.get("isDoorExit") for m in monuments)
+                if has_exit:
+                    lines.append("║  ░░░    ═══════  DOOR / EXIT  ═══════")
+                elif "LAV" in types:
+                    lines.append("║  ░░░    ━━━━━━━  LAVATORY      ━━━━━━━")
+                elif "GALLEY" in types:
+                    lines.append("║  ░░░    ━━━━━━━  GALLEY        ━━━━━━━")
+                continue
+            row = payload
+            sl = {
+                s.get("letter"): s
+                for s in (row.get("seats") or [])
+                if s.get("itemType") != "MONUMENT"
+            }
+            row_flags = []
+            if row.get("wing"):
+                row_flags.append("WING")
+            if any(s.get("isExit") for s in row.get("seats") or []):
+                row_flags.append("EXIT-ROW")
+            if any(s.get("isBulkhead") for s in row.get("seats") or []):
+                row_flags.append("BULKHEAD")
+            parts = []
+            for g in groups:
+                cells = []
+                for letter in list(g):
+                    s = sl.get(letter)
+                    if not s:
+                        cells.append(" · ")
+                    elif s.get("itemType") == "MONUMENT":
+                        cells.append(" ▓ ")
+                    elif s.get("isBlocked") or s.get("isPermanentBlocked"):
+                        cells.append(" █ ")
+                    elif s.get("isAvailable"):
+                        tier = int(s.get("tier") or 0)
+                        price = (tiers.get(tier) or {}).get("price") or 0
+                        cells.append(" $ " if price > 0 else " ○ ")
+                    else:
+                        cells.append(" ✕ ")
+                parts.append(" ".join(cells))
+            note = ("  ← " + ", ".join(row_flags)) if row_flags else ""
+            lines.append(f"║  {row.get('number'):>3}     " + " │ ".join(parts) + note)
+        lines.append("╚" + "═" * 60)
+        lines.append("")
+
+    legend_parts = [
+        "○ = free avail", "$ = paid avail", "✕ = occupied",
+        "█ = blocked", "▓ = monument", "· = no seat",
+    ]
+    legend = "Legend:  " + "   ".join(legend_parts)
+    if sm.get("tiers"):
+        legend += "\n\nPricing tiers:\n"
+        for tid, t in sorted(tiers.items()):
+            price = t.get("price") or 0
+            if price > 0:
+                legend += f"  tier {tid}: ${price:.2f}\n"
+
+    return {"ascii": "\n".join(lines), "legend": legend}

@@ -32,6 +32,8 @@ test:
     skip: true  # requires a live cart_id; auto-test can't synthesize
   register_seats:
     skip: true  # destructive — commits a seat to a held cart
+  render_seatmap:
+    skip: true  # requires a live cart_id
 ---
 
 # United Airlines
