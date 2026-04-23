@@ -24,6 +24,12 @@ test:
       depart_date: '2026-04-28'
   store_session_cookies:
     skip: true  # requires runtime cookie params; not auto-testable
+  select_flight:
+    skip: true  # requires a live cart_id from search_flights; destructive (mints held cart)
+  register_traveler:
+    skip: true  # requires a cart_id from select_flight; commits PII to a held cart
+  get_seatmap:
+    skip: true  # requires a live cart_id; auto-test can't synthesize
 ---
 
 # United Airlines

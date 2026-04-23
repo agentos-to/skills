@@ -725,6 +725,8 @@ async def search_flights(
                 "_fareFamily": product.get("fareFamily"),
                 "_bookingCode": product.get("bookingCode"),
                 "_productType": product.get("productType"),
+                "_fareBasisCode": ((product.get("fares") or [{}])[0].get("fareBasisCode")),
+                "_flightHash": flight.get("hash"),
                 "_cartId": cart_id,
                 "_parentProductId": parent_id,
             })
@@ -735,3 +737,519 @@ async def search_flights(
             _emit(p)
 
     return offers
+
+
+# ── booking flow tools ───────────────────────────────────────────────────────
+#
+# The booking flow (post-search) is:
+#   1. select_flight(cart_id, booking_token, flight_hash)
+#      → POST /api/flight/RegisterFlights
+#      → commits the outbound selection, response carries a DisplayCart
+#        with fare + taxes + traveler placeholders.
+#   2. register_traveler(cart_id, traveler_data)
+#      → POST /api/ShoppingCart/RegisterTravelers
+#      → commits passenger details (name, DOB, contact, KTN, Loyalty).
+#   3. get_seatmap(cart_id, flight_hash, ...)
+#      → POST /api/SeatMap/Retrieve
+#      → returns the full cabin layout with pricing + availability.
+#   4. (TBD) register_seats, apply_offers, checkout
+#
+# The skill stops short of checkout — we never submit payment.
+
+
+def _bbx_cell_id(booking_token: str, fare_family: str | None = None) -> str:
+    """Construct a BBXCellId from a search-time productId.
+
+    Captured: search gave productId ending in `002` (Basic Economy ECO-BASIC);
+    RegisterFlights needed BBXCellId ending in `006`. Suffix 006 = fare column
+    id. Exact mapping from fare_family → suffix needs more clicks to pin down.
+    For now, trust the caller to pass a properly-suffixed id (we echo it as-is).
+
+    TODO: when we capture more fare-column clicks, implement suffix remap
+    table here.
+    """
+    return booking_token
+
+
+@returns("reservation")
+@connection("web")
+@timeout(45)
+async def select_flight(
+    *,
+    cart_id: str,
+    booking_token: str,
+    flight_hash: str,
+    fare_type: str = "Refundable",
+    **params,
+) -> dict:
+    """Commit a flight selection — the step between search and traveler-info.
+
+    Hits `/api/flight/RegisterFlights` with the cart id + booking token
+    from `search_flights`. Returns a `reservation` stub with the cart
+    state: total amount, fare breakdown, selected flight. The reservation
+    isn't "booked" yet (no PNR) — it's a held cart, good for ~5 min
+    before the checkout session idle-times out.
+
+    Args:
+        cart_id: UUID from the search meta event (carry over).
+        booking_token: productId from the chosen offer (search result).
+        flight_hash: hash from the chosen flight option (e.g. "118-1336-UA").
+        fare_type: "Refundable" (default) or "NonRefundable".
+    """
+    body = {
+        "CartId": cart_id,
+        "BBXCellId": _bbx_cell_id(booking_token),
+        "MoneyAndMilesOptionId": None,
+        "BBXSolutionSetId": None,
+        "flightHash": flight_hash,
+        "RequeryForUpsell": False,
+        "CalendarFilters": {"Filters": {"PriceScheduleOptions": {"Stops": 1}}},
+        "FareType": fare_type,
+        "BuildHashValue": "true",
+        "Characteristics": [
+            {"Code": "IsNewRTI", "Value": "true"},
+        ],
+    }
+    resp = await _authed_post("/api/flight/RegisterFlights", body=body)
+    if resp.get("status") != 200:
+        raise RuntimeError(
+            f"RegisterFlights failed: status={resp.get('status')} "
+            f"body={(resp.get('body') or '')[:300]}"
+        )
+    data = ((resp.get("json") or {}).get("Data") or {})
+    dc = data.get("DisplayCart") or {}
+    trips_raw = dc.get("DisplayTrips") or []
+
+    # Build trip shapes from DisplayTrips — these are the selected legs
+    trips = []
+    for dt in trips_raw:
+        flights = dt.get("Flights") or dt.get("DisplayFlights") or []
+        legs = []
+        for f in flights:
+            legs.append({
+                "id": f"UA{f.get('FlightNumber','')}:{f.get('DepartDateTime','')}",
+                "flightNumber": f"UA {f.get('FlightNumber','')}",
+                "departureTime": (f.get("DepartDateTime") or "").replace(" ", "T") or None,
+                "arrivalTime": (f.get("ArrivalDateTime") or f.get("DestinationDateTime") or "").replace(" ", "T") or None,
+                "airline": _UNITED_ORG,
+                "departsFrom": {"iataCode": f.get("Origin"), "name": f.get("Origin")},
+                "arrivesAt":  {"iataCode": f.get("Destination"), "name": f.get("Destination")},
+            })
+        first = flights[0] if flights else {}
+        last  = flights[-1] if flights else {}
+        trips.append({
+            "id": f"ua-trip:{cart_id}:{dt.get('TripIndex') or '1'}",
+            "name": f"{dt.get('Origin') or first.get('Origin','?')}→{dt.get('Destination') or last.get('Destination','?')}",
+            "tripType": "flight",
+            "status": "held",
+            "departureTime": (first.get("DepartDateTime","") or "").replace(" ","T") or None,
+            "arrivalTime":   (last.get("ArrivalDateTime", last.get("DestinationDateTime","")) or "").replace(" ","T") or None,
+            "carrier": _UNITED_ORG,
+            "origin":      {"iataCode": dt.get("Origin") or first.get("Origin"), "name": dt.get("Origin") or first.get("Origin")},
+            "destination": {"iataCode": dt.get("Destination") or last.get("Destination"), "name": dt.get("Destination") or last.get("Destination")},
+            "legs": legs,
+        })
+
+    return {
+        "id": f"united-cart:{cart_id}",
+        "reservationType": "flight",
+        "reservationId": cart_id,    # pre-PNR: use cart id as reservation id
+        "status": "hold",            # held cart, not yet confirmed
+        "bookingType": "instant",
+        "totalAmount": dc.get("GrandTotal"),
+        "baseAmount":  (dc.get("DisplayPrices") or [{}])[0].get("Amount") if dc.get("DisplayPrices") else None,
+        "currency": "USD",
+        "at": _UNITED_ORG,
+        "trips": trips,
+        # Non-shape passthrough for downstream tools
+        "_cartId": cart_id,
+        "_bbxSolutionSetId": data.get("LastBBXSolutionSetId"),
+        "_flightHash": flight_hash,
+    }
+
+
+@returns("reservation")
+@connection("web")
+@timeout(45)
+async def register_traveler(
+    *,
+    cart_id: str,
+    surname: str = None,
+    given_name: str = None,
+    middle_name: str = "",
+    suffix: str = "",
+    date_of_birth: str = None,      # MM/DD/YYYY
+    sex: str = None,                 # "M" | "F"
+    known_traveler_number: str = "",
+    redress_number: str = "",
+    email: str = None,
+    phone_number: str = None,        # "5551234567" (10 digits, US)
+    country_calling_code: str = "1",
+    mileage_plus_id: str = None,
+    loyalty_program_id: str = "7",   # 7 = United
+    **params,
+) -> dict:
+    """Submit traveler info to the cart — step 2 of booking.
+
+    Fills in the `/ShoppingCart/RegisterTravelers` payload. Any arg left
+    as None will be pulled from the logged-in user's profile
+    (`/xapi/myunited/User/profile`) — so a logged-in user booking for
+    themselves can call `register_traveler(cart_id=...)` with nothing
+    else.
+
+    Args:
+        cart_id: from select_flight response.
+        surname, given_name, middle_name, suffix: passenger name as it
+          should appear on the ticket. Defaults to profile.
+        date_of_birth: MM/DD/YYYY. Defaults to profile.
+        sex: "M"/"F". Defaults to profile GenderCode.
+        known_traveler_number: TSA PreCheck / Global Entry / NEXUS ID.
+        redress_number: DHS TRIP redress number (for no-fly-list appeals).
+        email: contact email. Defaults to profile primary.
+        phone_number: 10-digit US number. Defaults to profile primary mobile.
+        country_calling_code: "1" for US, etc.
+        mileage_plus_id: MP number to credit. Defaults to logged-in MP#.
+        loyalty_program_id: "7" = United. For partner FFs, different id.
+    """
+    # Fetch profile if any arg is None — we need it for the defaults
+    need_profile = any(v is None for v in (surname, given_name, date_of_birth, sex, email, phone_number, mileage_plus_id))
+    if need_profile:
+        prof_resp = await _authed_get("/xapi/myunited/User/profile")
+        prof = ((prof_resp.get("json") or {}).get("data") or {}).get("profile") or {}
+        t0 = (prof.get("Travelers") or [{}])[0]
+
+        surname           = surname           or t0.get("LastName")
+        given_name        = given_name        or t0.get("FirstName")
+        middle_name       = middle_name or t0.get("MiddleName") or ""
+        suffix            = suffix or t0.get("Suffix") or ""
+        # DOB: profile has "1987-01-25T00:00:00"; United wants "01/25/1987"
+        if not date_of_birth:
+            raw = t0.get("BirthDate") or ""
+            if raw:
+                from datetime import datetime
+                try:
+                    date_of_birth = datetime.fromisoformat(raw.replace("Z","+00:00")).strftime("%m/%d/%Y")
+                except Exception:
+                    date_of_birth = raw[:10]
+        sex = sex or t0.get("GenderCode")
+        mileage_plus_id = mileage_plus_id or t0.get("MileagePlusId")
+
+        if not email:
+            em_resp = await _authed_get("/api/user/emailAddresses")
+            em_list = ((em_resp.get("json") or {}).get("data") or {}).get("EmailAddresses") or []
+            primary = next((e for e in em_list if e.get("IsPrimary")), (em_list[0] if em_list else {}))
+            email = primary.get("EmailAddress")
+
+        if not phone_number:
+            ph_resp = await _authed_get("/api/user/phoneNumbers")
+            ph_list = ((ph_resp.get("json") or {}).get("data") or {}).get("PhoneNumbers") or []
+            primary = next((p for p in ph_list if p.get("IsPrimary")), (ph_list[0] if ph_list else {}))
+            phone_number = primary.get("PhoneNumber")
+            country_calling_code = primary.get("CountryPhoneNumber") or country_calling_code
+
+        if not known_traveler_number:
+            # Pull from travelerSupplementaryTravelInfo
+            sup_resp = await _authed_get("/api/user/travelerSupplementaryTravelInfo")
+            sup = ((sup_resp.get("json") or {}).get("data") or {}).get("SupplementaryTravelInfos") or []
+            ktn = next((s.get("Number") for s in sup if s.get("Type") == "K"), "")
+            known_traveler_number = ktn or ""
+
+    # Build the body. Documents[] carries KTN as Type=15 (Secure Flight).
+    documents = []
+    if known_traveler_number:
+        documents.append({
+            "DateOfBirth": date_of_birth,
+            "KnownTravelerNumber": known_traveler_number,
+            "RedressNumber": redress_number or None,
+            "CanadianTravelNumber": None,
+            "GivenName": given_name,
+            "MiddleName": middle_name,
+            "Surname": surname,
+            "Suffix": suffix,
+            "Sex": sex,
+            "Type": 15,  # Secure Flight passenger doc
+        })
+
+    body = {
+        "Channel": "WEB",
+        "PetTravelers": None,
+        "Travelers": None,
+        "WorkFlowType": 1,
+        "IsUMNROptIn": False,
+        "FlightTravelers": [{
+            "OxygenFlowRate": 0,
+            "TravelerNameIndex": "",
+            "Traveler": {
+                "Person": {
+                    "Surname": surname,
+                    "GivenName": given_name,
+                    "MiddleName": middle_name,
+                    "Suffix": suffix,
+                    "DateOfBirth": date_of_birth,
+                    "Sex": sex,
+                    "Documents": documents,
+                    "CountryOfResidence": {},   # profile may be stale; leave blank
+                    "Nationality": [],
+                    "Type": "ADT",
+                    "InfantIndicator": "false",
+                    "Contact": {
+                        "Emails": [{"Address": email}],
+                        "PhoneNumbers": [{
+                            "Description": "H",
+                            "CountryAccessCode": "US",     # ISO country; NOT the calling code
+                            "AreaCityCode": str(country_calling_code),
+                            "PhoneNumber": str(phone_number),
+                        }],
+                    },
+                },
+                "LoyaltyProgramProfile": {
+                    "LoyaltyProgramCarrierCode": "UA",
+                    "LoyaltyProgramMemberID": mileage_plus_id,
+                    "LoyaltyProgramID": loyalty_program_id,
+                    "LoyaltyProgramMemberTierLevel": None,
+                },
+            },
+            "SpecialServiceRequests": [],
+            "PtcList": None,
+        }],
+        "SpecialServiceRequest": None,
+        "IsReserved": False,
+        "Characteristics": [
+            {"Code": "OMNICHANNELCART", "Value": True},
+        ],
+        "CartId": cart_id,
+        "IsSessionFirst": False,
+        "ReEvaluateExpressCheckout": False,
+    }
+    resp = await _authed_post("/api/ShoppingCart/RegisterTravelers", body=body)
+    if resp.get("status") != 200:
+        raise RuntimeError(
+            f"RegisterTravelers failed: status={resp.get('status')} "
+            f"body={(resp.get('body') or '')[:300]}"
+        )
+
+    # RegisterTravelers uses lowercase "data" (unlike RegisterFlights's "Data").
+    js = resp.get("json") or {}
+    data = js.get("data") or js.get("Data") or {}
+    dc = data.get("DisplayCart") or {}
+    return {
+        "id": f"united-cart:{cart_id}",
+        "reservationType": "flight",
+        "reservationId": cart_id,
+        "status": "hold",
+        "bookingType": "instant",
+        "totalAmount": dc.get("GrandTotal"),
+        "currency": "USD",
+        "at": _UNITED_ORG,
+        "_cartId": cart_id,
+        "_travelerAccepted": True,
+    }
+
+
+@returns("seatmap")
+@connection("web")
+@timeout(45)
+async def get_seatmap(
+    *,
+    cart_id: str,
+    flight_number: int,
+    origin: str,
+    destination: str,
+    departure_datetime: str,       # "2026-04-28T13:00"
+    arrival_datetime: str,          # "2026-04-28T15:02"
+    class_of_service: str = "N",
+    fare_basis_code: str = "",
+    segment_number: int = 1,
+    dod_cabins: list = None,
+    **params,
+) -> dict:
+    """Fetch the full seat map for a selected flight.
+
+    Returns a `seatmap` node with cabins[] (each with rows[], seats[],
+    monumentRows[]), tiers[] pricing, and summary flags. Not a booking
+    commitment — just the catalog.
+
+    Args:
+        cart_id: UUID from select_flight / register_traveler.
+        flight_number: integer flight number (e.g. 1336).
+        origin, destination: IATA codes.
+        departure_datetime, arrival_datetime: "YYYY-MM-DDTHH:MM" local.
+        class_of_service: booking RBD ("N" = Basic Economy).
+        fare_basis_code: e.g. "LAA0AQBN" — from the chosen fare.
+        segment_number: 1 for single-flight; increments for multi-segment.
+        dod_cabins: ["J","O"] captures both First (J) and Economy (O).
+    """
+    import uuid
+    if dod_cabins is None:
+        dod_cabins = ["J", "O"]
+
+    # Look up traveler info from profile — SeatMap/Retrieve needs a populated
+    # travelers[] in the body, or it 500s with NullReferenceException.
+    prof_resp = await _authed_get("/xapi/myunited/User/profile")
+    prof = ((prof_resp.get("json") or {}).get("data") or {}).get("profile") or {}
+    t0 = (prof.get("Travelers") or [{}])[0]
+    from datetime import datetime, date
+    dob_raw = t0.get("BirthDate") or ""
+    try:
+        dob_dt = datetime.fromisoformat(dob_raw.replace("Z","+00:00"))
+        dob_str = dob_dt.strftime("%m/%d/%Y")
+        age = (date.today().year - dob_dt.year) - (
+            (date.today().month, date.today().day) < (dob_dt.month, dob_dt.day)
+        )
+    except Exception:
+        dob_str = dob_raw[:10]
+        age = None
+
+    session_key = f"{cart_id}{uuid.uuid4()}"
+    body = {
+        "cartId": cart_id,
+        "channelTransactionId": str(uuid.uuid4()),
+        "reservationReferenceId": cart_id,
+        "correlationId": "",
+        "sessionKey": session_key,
+        "dodCabins": dod_cabins,
+        "seatMapRequest": {
+            "recordLocator": None,
+            "recordLocatorCreatedDate": None,
+            "languageCode": "en-US",
+            "isLapChild": False,
+            "isAwardReservation": False,
+            "flightSegments": [{
+                "premiumProducts": [],
+                "arrivalAirport": {"iataCode": destination, "iataCountryCode": {"CountryCode": "US"}},
+                "arrivalDateTime": arrival_datetime,
+                "checkInSegment": False,
+                "classOfService": class_of_service,
+                "coupons": [{}],
+                "departureAirport": {"iataCode": origin, "iataCountryCode": {"CountryCode": "US"}},
+                "departureDateTime": departure_datetime,
+                "farebasisCode": fare_basis_code,
+                "flightNumber": int(flight_number),
+                "isValidSegment": True,
+                "marketingAirlineCode": "UA",
+                "operatingAirlineCode": "UA",
+                "operatingFlightNumber": int(flight_number),
+                "pricing": "true",
+                "segmentNumber": int(segment_number),
+            }],
+            "lofSegments": [],
+            "reservationReferences": None,
+            "travelers": [{
+                "specialServiceRequests": None,
+                "lastName": t0.get("LastName"),
+                "firstName": t0.get("FirstName"),
+                "gender": t0.get("GenderCode") or "M",
+                "passengerTypeCode": "ADT",
+                "travelerIndex": "1.1",
+                "loyaltyProfiles": [{
+                    "loyaltyLevel": "0",
+                    "loyaltyProgramCarrierCode": "UA",
+                    "memberShipId": t0.get("MileagePlusId"),
+                    "programId": "UA",
+                }],
+                "suffix": t0.get("Suffix") or "",
+                "dateOfBirth": dob_str,
+                "type": "ADT",
+                "id": 1,
+                "age": age,
+            }],
+            "bookingCode": class_of_service,
+            "productCode": "ELF",        # "ELF" = Basic Economy; for other fares this may differ
+            "callRtd": False,
+            "dutyCode": None,
+            "bundleCode": None,
+            "channelId": "101",
+            "channelName": "OBE",        # Online Booking Engine
+            "isPetInCabin": False,
+            "hasSSR": False,
+            "pointOfSale": "US",
+            "currencyCode": "USD",
+        },
+    }
+
+    # Warm up the cart session — loading the cart populates server-side
+    # state that SeatMap/Retrieve relies on. Without this, SeatMap returns
+    # a NullReferenceException from UAL.ECommerce.Domain.SeatMap.
+    await _authed_get(
+        f"/api/ShoppingCart/LoadReservationAndCart"
+        f"?cartId={cart_id}&workFlowType=1&clearBundles=false&clearSeats=false&isConfirmationPage=false"
+    )
+
+    resp = await _authed_post("/api/SeatMap/Retrieve", body=body)
+    if resp.get("status") != 200:
+        raise RuntimeError(
+            f"SeatMap/Retrieve failed: status={resp.get('status')} "
+            f"body={(resp.get('body') or '')[:300]}"
+        )
+    data = resp.get("json") or {}
+    fi = data.get("flightInfo") or {}
+    ai = data.get("aircraftInfo") or {}
+
+    # Tier price lookup (strip out the per-seat validator tokens — too bulky)
+    tiers_clean = []
+    for t in (data.get("tiers") or []):
+        pricing = t.get("pricing") or []
+        first = pricing[0] if pricing else {}
+        tiers_clean.append({
+            "id": t.get("id"),
+            "currencyCode": t.get("currencyCode"),
+            "price": first.get("totalPrice"),
+            "basePrice": first.get("basePrice"),
+            "eligibility": first.get("eligibility"),
+        })
+
+    # Cabins — keep rows/seats/monumentRows but drop opaque `pricingValidators`
+    cabins_clean = []
+    total_avail = 0
+    total_seats = 0
+    has_exit = False
+    has_free = False
+    has_paid = False
+    for cabin in (data.get("cabins") or []):
+        cleaned = {
+            k: v for k, v in cabin.items()
+            if k in ("isUpperDeck","cabinType","cabinBrand","cabinBranded","layout",
+                     "rowCount","columnCount","availableSeats","totalSeats",
+                     "rows","monumentRows","adjacentSeats")
+        }
+        total_avail += cabin.get("availableSeats", 0) or 0
+        total_seats += cabin.get("totalSeats", 0) or 0
+        # Walk rows for summary flags + tier lookup
+        for row in cleaned.get("rows") or []:
+            for s in row.get("seats") or []:
+                if s.get("isExit"): has_exit = True
+                if s.get("isAvailable"):
+                    tier_id = int(s.get("tier") or 0)
+                    tier = next((t for t in tiers_clean if t["id"] == tier_id), None)
+                    price = (tier or {}).get("price") or 0
+                    if price > 0: has_paid = True
+                    else: has_free = True
+        cabins_clean.append(cleaned)
+
+    # Heuristic: if no cabin had anything available AND all tiers say
+    # "Seat selection not eligible for ELF Fare", it's Basic Economy locked.
+    eligibility_msgs = " ".join((t.get("eligibility") or "") for t in tiers_clean)
+    basic_locked = ("ELF" in eligibility_msgs and total_avail == 0)
+
+    sm_id = f"united-seatmap:{cart_id}:{fi.get('marketingFlightNumber')}"
+    return {
+        "id": sm_id,
+        "flightNumber": f"UA {fi.get('marketingFlightNumber','')}",
+        "origin": fi.get("departureAirport"),
+        "destination": fi.get("arrivalAirport"),
+        "departureTime": fi.get("departureDate"),
+        "fareBasisCode": fare_basis_code,
+        "classOfService": class_of_service,
+        "aircraftCode": ai.get("icr"),
+        "totalSeats": total_seats,
+        "availableSeats": total_avail,
+        "cabins": cabins_clean,
+        "tiers": tiers_clean,
+        "hasExitRow": has_exit,
+        "hasFreeSeats": has_free,
+        "hasPaidSeats": has_paid,
+        "basicEconomyLocked": basic_locked,
+        "at": _UNITED_ORG,
+        # Non-shape — useful for re-calling with same keys
+        "_cartId": cart_id,
+    }
