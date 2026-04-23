@@ -22,6 +22,17 @@ Reverse-engineered: 2026-04-23.
   Securiti.ai consent. Third-party scripts — none of them relevant to our
   replay surface.
 
+## ⚠️ Akamai soft-block signature (learned the hard way)
+
+When a POST to united.com returns **HTTP 200 + `Content-Type: application/x-ndjson` + `Content-Length: 0`**, this is **not** "malformed body". It's Akamai Bot Manager's **deception/tarpit action** silently dropping the response. Evidence:
+- The response headers include `Server: volt-adc` (F5 Volterra edge), `x-accel-buffering: no` (stream wasn't buffered server-side — it's actually empty), and `Set-Cookie: akavpau_ualwww=...` (per-visitor auth cookie rotate — challenge signal).
+- Malformed bodies return 400/500 with an error envelope.
+- Reproduces even when **the same request is fired via `Runtime.evaluate` from inside the real Brave tab** (same JA4, same cookies, same everything).
+
+**Implication for our skill**: don't replay POSTs against booking/state-change endpoints from Python urllib/http.client. Either:
+1. Use `agentos.client` with `client="browser"` (bundles UA + Sec-CH-UA + Sec-Fetch-*); if the engine has wreq/BoringSSL support that's better still.
+2. Drive the actual clicks via CDP on a live Brave session and **intercept** the XHR via `Fetch.enable` patterns — we read the real body the browser sent and the real response the browser got.
+
 ## Auth
 
 ### Cookie tier
@@ -429,6 +440,394 @@ Apr 28 Economy (including Basic), 1 passenger, 418KB, 32 flight options.
 - Standard Economy: $260 (L class)
 - (plus Economy Plus, First at higher prices; nested in products[0].nestedProducts)
 
+## Flight selection — **actually `RegisterFlights`, not `SelectAndFetch`**
+
+I burned a lot of cycles assuming `/api/flight/SelectAndFetchSSENestedFlights`
+was the "select outbound + search return" call. **It's not.** Live capture
+of the actual "Basic Economy works for me → Select" click shows the SPA fires
+**`POST /api/flight/RegisterFlights`** with a tiny body:
+
+### Endpoint
+
+```
+POST https://www.united.com/api/flight/RegisterFlights
+X-Authorization-api: bearer <hash>
+Content-Type: application/json
+```
+
+### Request body (captured live on UA 1336 $259 Basic click)
+
+```json
+{
+  "CartId": "2D7A02F9-C94F-476A-ADE2-04EE5CACBAE0",
+  "BBXCellId": "VAU4pbMyP90PjjnrkiUqEA006",
+  "MoneyAndMilesOptionId": null,
+  "BBXSolutionSetId": null,
+  "flightHash": "118-1336-UA",
+  "RequeryForUpsell": false,
+  "CalendarFilters": {"Filters": {"PriceScheduleOptions": {"Stops": 1}}},
+  "FareType": "Refundable",
+  "BuildHashValue": "true",
+  "Characteristics": [
+    {"Code": "IsNewRTI", "Value": "true"},
+    {"Code": "fsrQueryParam", "Value": "?tt=1&st=bestmatches&d=2026-04-28&...&idx=1&mm=0&cartId=undefined"}
+  ]
+}
+```
+
+### Key observations on selection
+
+- **`BBXCellId` is NOT the `productId` from search results.** The search gave us `VAU4pbMyP90PjjnrkiUqEA002` (suffix `002`); the click sent `VAU4pbMyP90PjjnrkiUqEA006` (suffix `006`). **The suffix maps to the fare-column ID** (basic, standard, plus, first). So the frontend takes the product-hash prefix and concatenates the chosen fare column. This needs confirming by capturing different fare clicks — TBD.
+- **`flightHash` = `118-1336-UA`** — matches the `hash` field in the `flightOption` event.
+- **`CartId` is the one from the SSE `meta` event** — thread from search → register.
+- **`Characteristics.fsrQueryParam`** is the whole `?tt=1&...` URL query string from the choose-flights page. Frontend literally forwards the URL query. Possibly signal.
+- **`IsNewRTI: "true"`** — probably "use the new Review Trip Itinerary UI". Safe to always send true.
+
+### Response shape
+
+`RegisterFlights` returns a **non-streaming JSON** envelope:
+
+```
+{
+  "Data": {
+    "CallTimeDomainFltRes": "63912572352.03",
+    "CartId": "<same UUID>",
+    "LastBBXSolutionSetId": "0G3SuIycAzpAM0zwGvgSflU",
+    "Status": 1,
+    "DisplayCart": {
+      "CartId": "...",
+      "GrandTotal": 308.4,             // base + taxes
+      "SearchType": 1,
+      "DisplayTravelers": [{...}],     // currently just logged-in user's DOB
+      "DisplayTrips": [
+        {
+          "Origin": "AUS", "Destination": "SFO",
+          "DisplayFlights": [ /* the selected UA 1336 segment */ ],
+          "ColumnInformation": { "Columns": [...] }  // all fare columns with terms
+        }
+      ],
+      "DisplayPrices": [...],
+      "DisplayFees": [...],
+      ...
+    }
+  }
+}
+```
+
+**Round-trip**: even though our search was `tt=1` (round-trip), the Register
+response `DisplayTrips` only shows **1 trip** (AUS→SFO). Yet the URL
+transitioned directly to `/traveler/choose-travelers?cartId=...&tqp=R`
+(tqp=R = Round-trip query param). That's weird — **one Register commits the
+outbound AND skips the return slice**. Two plausible explanations:
+1. The "search" phase was actually one-way under the hood (despite `tt=1`)
+2. There's an additional Register call for the return leg we didn't capture
+   because it happened too fast (but we monitored 45s of intercept — we'd
+   have caught it).
+
+TBD: start a round-trip search fresh, carefully click outbound, observe.
+
+### Sidecar calls fired alongside Register (same click)
+
+These are display/upsell enrichment — the skill does NOT need to call them to book:
+
+| Method | Path | Body summary | Purpose |
+|--------|------|--------------|---------|
+| GET | `/xapi/myunited/User/profile` | — | (re-fetch profile, probably to show miles earning preview) |
+| POST | `/api/flight/GetSpecialMealsEligibility` | Full FlightSegment dicts for each segment | Meal ordering eligibility per segment |
+| POST | `/api/Flight/GetProducts` (note capital F) | `{CartId, ProductCodes: ["BAG"], Characteristics: [{Code: "OverrideBagPolicy", Value: "GeneralMember"}]}` | Baggage pricing/policy for current cart |
+| POST | `/api/Flight/GetProducts` (second call) | `{CartId, ProductCodes: ["FLK"], ...}` | Flight change/cancel policy ("FLK" = flight ??) |
+
+Both `GetProducts` calls return essentially the same 40KB cart snapshot.
+
+## Post-selection — traveler page
+
+URL pattern: `/en/us/traveler/choose-travelers?cartId=<UUID>&tqp=R`
+(tqp=R = Round-trip; `tqp=O` would be one-way; `tqp=MC` multi-city).
+
+**Note on `tqp`:** this URL param does NOT appear to actually toggle
+round-trip vs one-way. A search fired with `tt=1` (alleged round-trip)
+completed `RegisterFlights` and advanced to this page with `tqp=R` — but
+`SearchType: 1` in the cart, and only 1 DisplayTrip, and the price
+panel says "ONEWAY (1 TRAVELER)". Either `tt=1` means something else, or
+the search was implicitly downgraded to one-way because the return date
+never entered the Register call. **Round-trip booking path still TBD.**
+
+### Form state (captured from `/en/us/traveler/choose-travelers`)
+
+Form name: `rtiTraveler.travelers[i].*`. One row per traveler.
+
+| Field name                                                    | Example value            |
+|---------------------------------------------------------------|--------------------------|
+| `travelers[0].travelerSelectedIndex`                          | `0` (0 = self, 1 = Priyanka, -1 = new) |
+| (frequent flyer program select — opaque GUID name)            | `7 XX118941` (MP#, program 7 = United) |
+| `travelers[0].extraDetails.phone.countryCode`                 | `1|US`                    |
+| `travelers[0].extraDetails.phone.mobileNumber`                | `5126793195`              |
+| `travelers[0].email`                                          | `united@contini.co`       |
+| `travelers[0].extraDetails.travelerNumbers.knownTravelerNumber`| `158825994` (pre-populated) |
+| `travelers[0].extraDetails.travelerNumbers.redressNumber`     | (empty)                   |
+| `travelers[0].specialTravelNeed.wheelChair.isSelected`        | (checkbox)                |
+| `travelers[0].specialTravelNeed.specialRequest.BSCT/BLND/DEAF/DPNA_1` | (checkboxes)       |
+| `travelers[0].specialTravelNeed.serviceAnimal.isSelected`     | (checkbox)                |
+| `confirmationSave-0`                                          | Save to MP profile? (checkbox) |
+
+### Saved travelers dropdown
+
+`/xapi/myunited/User/profile` → `data.profile.Travelers[]` holds saved
+travelers under the same account. Each has its own `CustomerId` (numeric,
+stable) even though they share a `MileagePlusId` (the profile owner's).
+The dropdown maps the array index onto `rtiTraveler.travelers[i].travelerSelectedIndex`.
+
+Captured for Joe (2 travelers):
+- `CustomerId: 53955798, MP: XX118941` — Mr. Giuseppe Efisio Contini, DOB 1987-01-25, PTCCode `PPR`
+- `CustomerId: 179221772, MP: XX118941` — Priyanka Raina, DOB 1992-02-15, PTCCode null
+
+**Per-traveler Traveler object** from `/xapi/myunited/User/profile.data.profile.Travelers[i]`:
+```
+{
+  CustomerId, MileagePlusId, TitleCode, CustomerName,
+  FirstName, MiddleName, LastName, BirthDate ("1987-01-25T00:00:00"),
+  GenderCode, CountryOfResidence, EliteDetails: {EliteStatus, Tier},
+  CustomerMetrics: {PTCCode, ...},
+  Addresses: [...], EmailAddresses: [...], CreditCards: [...],
+  AirPreferences, DisplayPreferences, BehaviorSegments, Donor,
+  HistoricalPartnerCards, ...
+}
+```
+
+### `POST /api/ShoppingCart/RegisterTravelers` (the submit endpoint)
+
+Captured live. Request body:
+
+```jsonc
+{
+  "Channel": "WEB",
+  "PetTravelers": null,
+  "Travelers": null,        // LEGACY; the filled one is FlightTravelers
+  "WorkFlowType": 1,
+  "IsUMNROptIn": false,     // unaccompanied minor
+  "FlightTravelers": [
+    {
+      "OxygenFlowRate": 0,
+      "TravelerNameIndex": "",
+      "Traveler": {
+        "Person": {
+          "Surname": "Contini", "GivenName": "Giuseppe", "MiddleName": "Efisio", "Suffix": "",
+          "DateOfBirth": "01/25/1987",   // MM/DD/YYYY
+          "Sex": "M",                     // Sex from GenderCode
+          "Documents": [                  // KTN lives here
+            {
+              "DateOfBirth": "01/25/1987", "KnownTravelerNumber": "158825994",
+              "RedressNumber": null, "CanadianTravelNumber": null,
+              "GivenName": "Giuseppe", "MiddleName": "Efisio", "Surname": "Contini", "Suffix": "", "Sex": "M",
+              "Type": 15                  // 15 = Secure Flight / KTN passenger doc
+            }
+          ],
+          "CountryOfResidence": {},       // left empty — profile's "SG" is stale
+          "Nationality": [],              // left empty for same reason
+          "Type": "ADT",                   // Adult
+          "InfantIndicator": "false",
+          "Contact": {
+            "Emails": [{ "Address": "united@contini.co" }],
+            "PhoneNumbers": [{
+              "Description": "H",          // H = Home/primary
+              "CountryAccessCode": "US",   // NOTE: country NAME code
+              "AreaCityCode": "1",         // NOTE: this holds the country calling code (+1)
+              "PhoneNumber": "5126793195"  // 10-digit US number, no punctuation
+            }]
+          }
+        },
+        "LoyaltyProgramProfile": {
+          "LoyaltyProgramCarrierCode": "UA",
+          "LoyaltyProgramMemberID": "XX118941",
+          "LoyaltyProgramID": "7",
+          "LoyaltyProgramMemberTierLevel": null
+        }
+      },
+      "SpecialServiceRequests": [],
+      "PtcList": null
+    }
+  ],
+  "SpecialServiceRequest": null,
+  "IsReserved": false,
+  "Characteristics": [
+    {"Code": "OMNICHANNELCART", "Value": true},
+    {"Code": "fsrQueryParam", "Value": "?tt=1&st=bestmatches&d=2026-04-28&...&idx=1&mm=0&cartId=undefined&pst=NXo%3D-G-C"}
+  ],
+  "CartId": "2D7A02F9-C94F-476A-ADE2-04EE5CACBAE0",
+  "IsSessionFirst": false,
+  "ReEvaluateExpressCheckout": false
+}
+```
+
+Weird names to note:
+- `AreaCityCode` actually holds the country calling code (`1`), not the area code
+- `CountryAccessCode` holds the ISO country name (`US`), not an int
+- `Documents[].Type: 15` = Secure Flight / KTN doc type per United's internal enum
+
+### Endpoints that fired alongside / after RegisterTravelers
+
+```
+GET  /api/ShoppingCart/LoadReservationAndCart?cartId=<UUID>
+GET  /xapi/myunited/User/profile  (re-fetch)
+POST /api/User/ElectronicTravelCertificates?toCurrencyCode=USD
+GET  /api/User/FutureFlightCreditsResiduals
+```
+
+The page then navigates to
+`https://www.united.com/en/us/book-flight/customizetravel/<CartId>?tqp=R`
+— the "customize travel" / upsell + seats + ancillaries page.
+
+### Other booking endpoints (to capture on next pages)
+
+From the bundle's URL inventory at `.captures/chunks/main.b74efa9bde4258f132bb.js`:
+
+- POST `/api/Flight/SelectedFlights`
+- POST `/api/Flight/FetchUpsell`
+- POST `/api/ShoppingCart/RegisterOffers`
+- POST `/api/ShoppingCart/RegisterSeats` (if seats picked)
+- POST `/api/ShoppingCart/checkout`
+
+## Customize travel — bundle offers
+
+URL: `https://www.united.com/en/us/book-flight/customizetravel/<CartId>?tqp=R`
+
+Reached after `RegisterTravelers`. Shows "Travel add-ons" with 3 bundle
+cards (sometimes fewer/more). **No separate API fires to fetch bundles** —
+the bundle data is already in `/api/ShoppingCart/LoadReservationAndCart`'s
+response, but buried in a path the grep for "bundle"/"offer"/"merch"
+didn't hit. The SPA hydrates React state from there.
+
+**How to extract bundles from the page directly** (bypassing the
+LoadReservationAndCart parse entirely — the React `bundleOffers` prop
+has the clean normalized shape):
+
+```js
+// In the page context — via Runtime.evaluate:
+(async () => {
+  const h3 = Array.from(document.querySelectorAll('h3')).find(h => /Bundle Offer 1/i.test(h.textContent));
+  let root = h3.parentElement;
+  const fk = Object.keys(root).find(k => k.startsWith('__reactFiber$'));
+  let fiber = root[fk];
+  while (fiber) {
+    if (Array.isArray(fiber.memoizedProps?.bundleOffers)) {
+      return fiber.memoizedProps.bundleOffers;
+    }
+    fiber = fiber.return;
+  }
+})()
+```
+
+**bundleOffers prop shape** (verified live for AUS→SFO UA 1336):
+
+```jsonc
+[
+  {
+    "code": "B01",                    // bundle code
+    "isBundle": true,
+    "isPopularBundle": false,         // "Most Popular" banner driver
+    "startingFromAmount": 76,         // base price shown in UI ($76 plus tax)
+    "currencyCode": "USD",
+    "allFlightsStartingFrom": null,
+    "hasTax": true,
+    "isIncluded": false,
+    "partialEligibleProducts": [],
+    "showAveragePricing": false,
+    "isCovidWaiverDisabled": false,
+    "content": {...}, "presentation": {...},  // i18n strings + icons
+    "subProducts": [
+      {
+        "id": "1", "code": "B01", "groupCode": "BE", "subGroupCode": "B1",
+        "name": "Economy Plus",       // what the card shows
+        "associations": {
+          "SegmentRefIDs": ["1"],     // 1 segment (outbound)
+          "TravelerRefIDs": ["0"],
+          "ODMappings": [{"SegmentRefIDs":["1"],"RefID":"OD1"}]
+        },
+        "prices": [
+          {
+            "id": "B1-SOL1_OD1_1_0",  // the BUNDLE OFFER ID used on select
+            "amount": 81.7,           // WITH tax
+            "baseAmount": 76,         // WITHOUT tax
+            "currencyCode": "USD",
+            "taxes": [{"type":"FET","code":"US","amount":5.7,"description":"U.S. Transportation Tax"}],
+            "type": "Money",          // vs "Miles"
+            "hasTax": true,
+            "isIncluded": false,
+            "subGroupCode": "B1",
+            "characteristics": [{"Code":"RFIC","Value":"A"}]
+          }
+        ],
+        "extension": { "Bundle": {  // full bundle contents
+          "Products": [
+            {"Code":"EPU", "SubProducts":[{"Descriptions":["E+ Ltd Recline Exit Middle"], ...}]}
+          ]
+        }}
+      }
+    ]
+  },
+  {
+    "code": "B14",
+    "isPopularBundle": true,
+    "startingFromAmount": 104,
+    "subProducts": [{
+      "name": "Economy Plus and Extra Bag",
+      "prices": [{"id": "B14-SOL1_OD1_1_0", "amount": 109.4, "baseAmount": 104, ...}]
+    }]
+  },
+  {
+    "code": "B18",
+    "isPopularBundle": false,
+    "startingFromAmount": 97,
+    "subProducts": [{
+      "name": "Economy Plus and Priority Boarding",
+      "prices": [{"id": "B18-SOL1_OD1_1_0", "amount": 102.55, "baseAmount": 97, ...}]
+    }]
+  }
+]
+```
+
+Bundle naming: `B01` = Economy Plus seat alone. Higher codes combine
+products. `"B14"` with **Most Popular** flag is the 2-in-1 (seat + bag).
+`B18` pairs seat + priority boarding.
+
+Inputs on the page are named `check-offer-OD1` with values `0/1/2` (indices
+into the bundleOffers array). Selecting one **probably** fires
+`POST /api/ShoppingCart/RegisterOffers` with the price `id`
+(`B14-SOL1_OD1_1_0` etc.) — **TBD: capture on click**.
+
+## Flight-search aliases (from bundle)
+
+A fuller list of flight-related endpoints discovered in main.js:
+
+```
+/api/Flight/SelectedFlights         # current selection detail
+/api/flight/ApplyTravelCredits
+/api/flight/FetchAwardCalendar
+/api/flight/FetchCalendarFareMatrix
+/api/flight/FetchFareColumnEntitlement
+/api/flight/FetchFareWheel
+/api/flight/FetchFlexibleCalendars
+/api/flight/FetchFlights
+/api/flight/FetchLmxQuotes              # hover/display: miles-earnable quotes per product (captured)
+/api/flight/FetchMoneyAndMilesOptions
+/api/flight/FetchSSENestedFlights       # THE search endpoint
+/api/flight/FetchSessionFareWheel
+/api/flight/FlightAmenitiesIndicator
+/api/flight/GetCarbonEmissions
+/api/flight/GetFareColumns
+/api/flight/GetSpecialMealsEligibility  # (captured - fired alongside Register)
+/api/flight/GetTeaserTexts
+/api/flight/NestedCabinEntitlements
+/api/flight/OnTimePerformanceInfoMulti
+/api/flight/RecommendedFlights
+/api/flight/RegisterFlights             # THE selection endpoint
+/api/flight/RemoveTravelCredits
+/api/flight/SelectAndFetchFlights       # NOT used; bundle still references it (dead?)
+/api/flight/SelectAndFetchSSENestedFlights  # NOT used; silent 200+0byte = Akamai soft-block?
+/api/flight/ValidateOADisservice
+/api/flight/recentSearch
+```
+
 ## MileagePlus / membership activity (not yet captured)
 
 Joe's framing: this is "membership activity" not "flight activity" — miles
@@ -438,11 +837,11 @@ user navigates to that view.
 
 ## TODO
 
-- [ ] Return slice search (Index=2) — need to select an outbound first, then
-      capture. Same endpoint, different body.
-- [ ] Flight-select / pricing call — converts `productId` → priced cart.
-- [ ] Seat map endpoint
-- [ ] Traveler details submission (names, KTN, FF#)
+- [x] Flight-select / pricing call — `RegisterFlights` is the one, not `SelectAndFetchSSENestedFlights`.
+- [ ] Confirm round-trip: does the return slice need a second Register, or does the URL `tqp=R` param auto-book return at some later step?
+- [ ] BBXCellId construction — capture clicks on different fare columns (Standard, First) to see how the suffix changes.
+- [ ] Seat map endpoint (/api/ShoppingCart/RegisterSeats?)
+- [ ] Traveler details submission (names, KTN, FF#, contact info) — NEXT capture
 - [ ] Payment endpoint
 - [ ] PNR creation confirmation (where does the record locator come back?)
 - [ ] Award search (`AwardTravel: true`)
@@ -507,13 +906,31 @@ separate session when we actually book something.
 - **`credentials: 'include'`** required on fetch — `SameSite` on cookies.
 - **`expiresAt`** is ISO-8601 with 7 fractional second digits + `+00:00`
   offset.
+- **Checkout-flow idle timeout signs you out.** Sitting on the
+  `/customizetravel/<CartId>` page for ~5min while NOT clicking things
+  causes United to fire `GET /api/auth/signout` (clearing `AuthCookie`,
+  `User`, `SID`) and returns 403 on the subsequent
+  `/api/ShoppingCart/LoadReservationAndCart`. The cart survives (URL still
+  has the cart ID), but the session is cooked. **The skill MUST run the
+  booking flow (register → traveler → offers → seats → checkout) without
+  long pauses.** Inspection/probing must happen either before starting,
+  or after PNR generation.
 
 ## Tools for ongoing capture
 
 - `core/bin/browse-capture.py` — the standard RE toolkit CDP capturer.
 - `.captures/capture.py` — local helper that captures via CDP (request +
   response bodies, per-session JSONL). Idle mode for manually driving a
-  user flow.
+  user flow. **Caveat:** this script flushes on clean exit only — Ctrl-C
+  during the idle pump loses data. Use `/tmp/fix-capture.py` for
+  flush-on-each-event behavior.
+- **`/tmp/united-click-and-capture.py`** — the winning pattern: attach to
+  Brave, enable `Fetch.enable` interception for `/api/flight/*` + `/xapi/*`,
+  drive clicks via `Runtime.evaluate`, drain SSE streams via
+  `Fetch.takeResponseBodyAsStream` + `IO.read` loop, fulfill requests so
+  the browser keeps working. **This is the reliable way to capture
+  state-change XHRs** — no SSE buffering issues, no TLS fingerprint
+  mismatch, bodies always intact.
 - Chunks pulled to `.captures/chunks/` for static analysis. Main chunk:
   `main.b74efa9bde4258f132bb.js` (~5.6MB).
 
@@ -525,3 +942,257 @@ From `main.b74efa9bde4258f132bb.js`:
 - Action strings: `unitedapp/App/*` prefix
 - Header constant: `"X-Authorization-api"` → `"bearer ".concat(e.hash)`
 - Endpoints baked in: see table above
+
+## Seatmap (post-traveler-page)
+
+URL pattern: `/en/us/book-flight/seatmap/<CartId>?tqp=R`
+
+### `POST /api/SeatMap/Retrieve`
+
+Fires on seatmap page load. Returns full aircraft cabin data with every
+seat, pricing tier, monuments (galley/lavatory/exit), and wing/exit row
+flags. Response is ~300KB+ of rich JSON.
+
+Request body (captured live):
+
+```jsonc
+{
+  "cartId": "<UUID>",
+  "channelTransactionId": "<UUID>",
+  "reservationReferenceId": "<same as cartId>",
+  "correlationId": "",
+  "sessionKey": "<cartId><UUID>",      // session-bound handle
+  "dodCabins": ["J", "O"],             // cabin codes to retrieve
+  "seatMapRequest": {
+    "recordLocator": null,
+    "recordLocatorCreatedDate": null,
+    "languageCode": "en-US",
+    "isLapChild": false,
+    "isAwardReservation": false,
+    "flightSegments": [{
+      "premiumProducts": [],
+      "arrivalAirport": {"iataCode":"SFO","iataCountryCode":{"CountryCode":"US"}},
+      "arrivalDateTime": "2026-04-28T15:02",
+      "checkInSegment": false,
+      "classOfService": "N",               // RBD from selected fare
+      "coupons": [{}],
+      "departureAirport": {"iataCode":"AUS","iataCountryCode":{"CountryCode":"US"}},
+      "departureDateTime": "2026-04-28T13:00",
+      "farebasisCode": "LAA0AQBN",        // from selected fare
+      "flightNumber": 1336,
+      "isValidSegment": true,
+      "marketingAirlineCode": "UA",
+      "operatingAirlineCode": "UA",
+      "operatingFlightNumber": 1336,
+      "pricing": "true",
+      "segmentNumber": 1
+    }],
+    "lofSegments": []
+  }
+}
+```
+
+### Response shape (the important parts)
+
+```jsonc
+{
+  "transactionIdentifiers": {"transactionId": "..."},
+  "softErrors": [],
+  "flightInfo": {
+    "marketingFlightNumber": 1336,
+    "operatingFlightNumber": 1336,
+    "marketingCarrierCode": "UA",
+    "operatingCarrierCode": "UA",
+    "departureDate": "2026-04-28T13:00:00",
+    "departureAirport": "AUS",
+    "arrivalAirport": "SFO",
+    "noSeatSelectionWindow": false
+  },
+  "aircraftInfo": {
+    "tailNumber": null,
+    "icr": "C3E"                 // aircraft config code, not registration
+  },
+  "cabins": [
+    {
+      "isUpperDeck": false,
+      "cabinType": "J",            // J=First, Y=Economy
+      "cabinBrand": "United First",
+      "cabinBranded": "United First{R}",
+      "layout": "AB EF",           // letters per side, space = aisle
+      "rowCount": 4,
+      "columnCount": 5,             // includes the aisle column
+      "availableSeats": 0,
+      "totalSeats": 16,
+      "rows": [
+        {
+          "number": 1,
+          "verticalGridNumber": 1000,  // sortable with monumentRows
+          "wing": false,
+          "seats": [
+            {
+              "number": "1A", "letter": "A", "rowNumber": 1,
+              "tier": "1",                 // price-tier reference
+              "location": "Window",         // "Window" | "Middle" | "Aisle"
+              "seatSection": "Left",        // Left | Right
+              "itemType": "SEAT",           // or "MONUMENT"
+              "description": null,          // e.g. "Economy Plus", "Preferred Zone"
+              "isAvailable": false,
+              "isBlocked": false,
+              "isPermanentBlocked": false,
+              "isOccupied": true,
+              "isExit": false,              // this SEAT is an exit-row seat
+              "isDoorExit": false,
+              "isOnWing": false,
+              "isBulkhead": true,           // first row of cabin
+              "isExtraPitch": true,
+              "isExtraSeatWidth": true,
+              "hasInSeatPower": false,
+              "isWindowObstructedView": false,
+              "isLimitedSeatWidth": false,
+              "hasNoUnderSeatStorage": false,
+              "sellableSeatCategory": "...",
+              "iataAttributes": [...]       // IATA-standard attribute codes
+              // ... plus ~40 more per-seat flags (isBassinet, isHeld,
+              // allowPet, allowPrisonerGuard, allowDisabledPassenger,
+              // allowLapInfant, allowUnAccompaniedMinor, ...)
+            }
+          ]
+        }
+      ],
+      "monumentRows": [              // items BETWEEN seat rows (sorted by verticalGridNumber)
+        {
+          "verticalGridNumber": 2,
+          "monuments": [{
+            "itemType": "SPACER",     // "AISLE" | "SPACER" | "GALLEY" | "LAV"
+            "isDoorExit": true,        // marks a door
+            "horizontalGridNumber": 1,
+            "horizontalSpan": 1,
+            "verticalSpan": 1
+          }]
+        }
+      ]
+    }
+  ],
+  "tiers": [                         // pricing tiers
+    {
+      "id": 1,
+      "currencyCode": "USD",
+      "numberOfDecimals": 2.0,
+      "pricing": [{
+        "basePrice": 0, "totalPrice": 0,
+        "eligibility": "Prime Business Seats are not eligible",
+        "pricingValidators": [...]    // opaque per-seat validator tokens
+      }]
+    }
+    // tier 2..7 with actual prices; tier 8..19 = "Seat selection not eligible for ELF Fare" (Basic Economy)
+  ],
+  "travelers": [...]
+}
+```
+
+### Rendering a cabin from this data
+
+Merge `rows` + `monumentRows` into one sorted list by `verticalGridNumber`.
+Walk in order — seat rows emit seats indexed by letter; monument rows emit
+headers ("LAVATORY", "GALLEY", "DOOR/EXIT" if `isDoorExit: true`).
+
+Example ASCII render for UA 1336 (captured 2026-04-23):
+
+```
+╔════  Cabin 0: United First  (0/16, layout AB EF)  ════
+║  ROW     A  B │ E  F
+║  ░░░     ──  LAVATORY  ──
+║  ░░░     ══  DOOR / EXIT  ══
+║  ░░░     ──  GALLEY  ──
+║    1     ✕  ✕ │ ✕  ✕   ← BULKHEAD
+║    2     ✕  ✕ │ ✕  ✕
+║    3     ✕  ✕ │ ✕  ✕
+║    4     ✕  ✕ │ ✕  ✕
+
+╔════  Cabin 1: United Economy  (19/138, layout ABC DEF)  ════
+║  ROW     A  B  C │ D  E  F
+║    7     ✕  ✕  ✕ │ █  █  ✕   ← BULKHEAD
+║    8     ✕  ✕  ✕ │ ✕  ✕  ✕
+║   10     ✕  ✕  ✕ │ ✕  ✕  ✕
+║   ...
+║   20     ✕  ✕  ✕ │ ✕  ✕  ✕   ← WING, EXIT-ROW
+║   21     ✕  ✕  ✕ │ ✕  ✕  ✕   ← WING, EXIT-ROW
+║   22     ✕  $  ✕ │ ✕  $  ✕   ← WING
+║   ...
+```
+
+Legend: ✕=occupied, ○=free available, $=paid available, █=blocked, ·=no seat.
+
+**Important rendering notes:**
+- Rows are numbered non-contiguously (e.g. skip from 8→10, 12→14, 32→34).
+  Missing numbers are airline convention (skip 13, skip 15-19 for 737
+  config variant) — don't synthesize missing rows.
+- `row.wing: true` marks rows physically over the wing.
+- `seat.isExit: true` marks seats on an **exit row** (legal requirement:
+  adult, able-bodied, etc.). `monument.isDoorExit: true` marks an actual
+  aircraft door location between rows.
+- `seat.isBlocked` = blocked by airline (e.g. middle rows held back as
+  "elite only"). Shown as blocked squares in the UI.
+- `tier` on a seat is a lookup key into `tiers[i].id`. `tiers[i].pricing[0]
+  .totalPrice` is the per-seat charge (pre-tax).
+- Tiers 8-19 (Basic Economy etc.) have `totalPrice: 0` and
+  `eligibility: "Seat selection not eligible for ELF Fare"` — meaning the
+  fare class doesn't allow paid seat selection at all.
+
+### What determines a seat's availability
+
+```
+if not isAvailable:
+  if isBlocked or isPermanentBlocked: "blocked"    (airline held back)
+  elif isOccupied:                   "occupied"
+  elif isHeld:                       "held"        (another traveler mid-checkout)
+  else:                              "unavailable"
+```
+
+### Other seatmap signals
+- `isReserveSeat`: airline-reserved seat (e.g. pilot jumpseat, crew rest)
+- `isBassinet`: bassinet mount available at this seat
+- `allowPet`, `allowLapInfant`, `allowUnAccompaniedMinor`,
+  `allowDisabledPassenger`, `allowPrisonerGuard`: booking-rule flags
+- `iataAttributes`: list of IATA standard attribute codes (e.g. `"1A"` =
+  window, `"8"` = no seat recline) — gives portable cross-airline
+  attributes even if United's own naming differs
+
+### `aircraftInfo.icr`
+
+ICR code (e.g. `C3E`) is United's internal aircraft configuration code.
+Maps to aircraft type + cabin layout revision. Not the same as tail
+number. For displaying "737-800" etc., cross-reference from the earlier
+search response's `equipmentDisclosures.equipmentType`/`equipmentDescription`.
+
+## Drive pattern that actually worked (lessons learned 2026-04-23)
+
+After several false starts, this sequence worked end-to-end:
+
+1. **Verify login via cookies first** (`Network.getCookies` for
+   AuthCookie/User/SID present). If missing, the whole flow will fail
+   silently on `LoadReservationAndCart` 403.
+2. **Don't deep-link to `/fsr/choose-flights` cold** — the SPA may not
+   kick off `FetchSSENestedFlights` if it thinks the state is already
+   cached. Instead: navigate to `united.com/en/us` first, then to the
+   `/fsr/choose-flights?f=AUS&t=SFO&d=...&r=...` URL (round-trip URL
+   auto-fires search).
+3. **Round-trip URL renders `Select flight` buttons, not `Select a fare`**
+   — the matrix UI for round-trip shows price cards per (flight × cabin).
+   Click the `$<price>` button inside the row for the target flight.
+   One-way URLs (`tt=0`) caused "unable to complete your request" on our
+   session, so stick with round-trip URL even if you only want one-way;
+   the Register call will treat it as one-way based on body.
+4. **Scope button finders to the UA row ancestor** — `document.querySelectorAll('button')`
+   globally finds 30+ unrelated buttons. Walk up from a DOM leaf with
+   "UA <number>" text until you find a Flight container, then `querySelectorAll`
+   within it.
+5. **After Select fare → "Basic Economy works for me" toggle → Select**
+   — the `Select` button is disabled until the toggle is clicked (on
+   Basic Economy fares only).
+6. **Each page fires different endpoints** — `RegisterFlights` on the
+   Select click, `RegisterTravelers` on traveler-page Continue,
+   `SeatMap/Retrieve` on seatmap page load. Don't pause between clicks;
+   the session idles out after ~5min.
+7. **`Fetch.enable` breaks SSE** — only use passive `Network.enable`
+   capture. Exclude SSE endpoints from any intercept list.
