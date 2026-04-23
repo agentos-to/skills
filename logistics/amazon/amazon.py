@@ -28,7 +28,7 @@ import asyncio
 import time
 from typing import Any
 
-from agentos import claims, client, connection, molt, parse_int, returns, test, timeout, url
+from agentos import claims, client, connection, molt, normalize_email, parse_int, returns, test, timeout, url
 from lxml import html as lhtml
 from lxml.html import HtmlElement
 
@@ -1435,30 +1435,36 @@ def _parse_list_items(soup: HtmlElement) -> list[dict[str, Any]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_AMAZON = {"shape": "organization", "url": "https://amazon.com", "name": "Amazon"}
+
+
 @test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns("account")
 @claims("primary_user")
 @connection("web")
 async def check_session(**params) -> dict[str, Any]:
-    """Check session liveness and extract account identity.
+    """Check session liveness and return the authed account identity.
 
     Fetches two pages:
-    1. /gp/css/homepage.html — nav bar display name, customerId, marketplace, Prime status
-    2. /ax/account/manage  — Login & Security page, contains the account email
+    1. `/gp/css/homepage.html` — nav bar display name + internal ids +
+       Prime status from the JS config blob.
+    2. `/ax/account/manage` — Login & Security page, carries the account
+       email (the canonical identifier for Amazon accounts).
 
-    The email is the canonical identifier (unique per Amazon account).
+    Service-specific fields (customerId, marketplaceId, isPrime) ride in
+    `metadata.amazon` per the account-check protocol.
     """
 
     await _warm_session()
     resp = await _get(f"{BASE}/gp/css/homepage.html")
 
     if resp["status"] != 200:
-        return {"authenticated": False, "statusCode": resp["status"]}
+        return {"authenticated": False}
 
     body = resp["body"]
 
     if "ap/signin" in str(resp["url"]):
-        return {"authenticated": False, "redirect": str(resp["url"])}
+        return {"authenticated": False}
 
     name_match = re.search(
         r'nav-link-accountList-nav-line-1[^>]*>Hello,\s*([^<]+)<', body
@@ -1478,24 +1484,47 @@ async def check_session(**params) -> dict[str, Any]:
     customer_id = customer_id_match.group(1) if customer_id_match else None
     marketplace_id = marketplace_match.group(1) if marketplace_match else None
 
-    # Fetch Login & Security page to get the account email.
+    # The Login-&-Security page requires a single-factor step-up — Amazon
+    # blocks it behind /ap/signin even on a live session. Try it (it works
+    # when cookies carry a fresh step-up token); otherwise fall back to
+    # the customerId as canonical identifier. Agent-driven initial login
+    # (Wave 2 step 4 pattern) will make step-up achievable later; for now
+    # the customerId keeps the credential row stable and non-`default`.
     email = None
     manage_resp = await _get(f"{BASE}/ax/account/manage")
     if manage_resp["status"] == 200 and "ap/signin" not in str(manage_resp["url"]):
-        email_match = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", manage_resp["body"])
-        if email_match:
-            email = email_match.group(0)
+        em = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", manage_resp["body"])
+        if em:
+            email = em.group(0)
 
-    return {
+    metadata: dict[str, Any] = {}
+    if customer_id:
+        metadata["customerId"] = customer_id
+    if marketplace_id:
+        metadata["marketplaceId"] = marketplace_id
+    if prime_match is not None:
+        metadata["isPrime"] = True
+
+    # Canonical identifier: email if we got it, otherwise customerId.
+    # customerId is Amazon's stable per-account key — never changes.
+    identifier = normalize_email(email) if email else customer_id
+    if not identifier:
+        return {"authenticated": True, "at": _AMAZON}
+
+    result: dict[str, Any] = {
         "authenticated": True,
-        "identifier": email or customer_id or display,
-        "at": {"shape": "product", "url": "https://amazon.com", "name": "Amazon"},
-        "customerId": customer_id,
-        "display": display,
-        "email": email,
-        "marketplaceId": marketplace_id,
-        "isPrime": prime_match is not None,
+        "at": _AMAZON,
+        "identifier": identifier,
     }
+    if email:
+        result["email"] = normalize_email(email)
+    if display:
+        result["displayName"] = display
+    if customer_id:
+        result["userId"] = customer_id
+    if metadata:
+        result["metadata"] = {"amazon": metadata}
+    return result
 
 
 
