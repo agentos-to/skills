@@ -1883,3 +1883,108 @@ client-side countdown, not a server-side block.
   reason to navigate to any specific URL before opening the login
   drawer.
 
+### OTP box handling — proven pattern (session 3, 2026-04-24)
+
+The 6-box segmented OTP widget (`input.atm-c-otp-input`) does NOT
+respect the React native-setter trick. Setting `.value = ''` +
+dispatching `input` events across the 6 boxes leaves the widget's
+internal state holding the old digits — the next submit sends the
+stale code and the server invalidates the token.
+
+**What works (empirically verified):**
+
+Clear:
+```python
+# Focus box 5 (last), then Backspace 8 times via CDP Input domain
+await evaljs("const ins = document.querySelectorAll("
+             "'[role=dialog] input.atm-c-otp-input'); "
+             "if (ins[5]) ins[5].focus();")
+for _ in range(8):
+    await cdp.call("Input.dispatchKeyEvent", {
+        "type": "keyDown", "key": "Backspace",
+        "code": "Backspace", "windowsVirtualKeyCode": 8})
+    await cdp.call("Input.dispatchKeyEvent", {
+        "type": "keyUp", "key": "Backspace",
+        "code": "Backspace", "windowsVirtualKeyCode": 8})
+    await asyncio.sleep(0.05)
+```
+
+Type:
+```python
+# Focus box 0, then Input.insertText per digit — one at a time
+await evaljs("const ins = document.querySelectorAll("
+             "'[role=dialog] input.atm-c-otp-input'); "
+             "if (ins[0]) ins[0].focus();")
+for ch in code:
+    await cdp.call("Input.insertText", {"text": ch})
+    await asyncio.sleep(0.08)
+```
+
+**Readback before submit is mandatory:**
+```python
+values = await evaljs("Array.from(document.querySelectorAll("
+    "'[role=dialog] input.atm-c-otp-input')).map(i => i.value)")
+assert ''.join(values) == code
+banner = await evaljs("(document.querySelector('[role=alert]')"
+    "||{}).innerText")
+assert not banner or 'not sent' not in banner.lower()
+```
+
+Each wrong submit kills the signin token and forces a full restart
+(clear cookies → fresh identifier + password → new OTP). A single
+bad click is expensive; fail the submit path closed if readback
+doesn't match.
+
+**What doesn't work on this widget:**
+- `el.value = ''` + synthetic `input`/`change` events (React's
+  widget state survives).
+- `Cmd+A` + `Backspace` per box — multi-box backspace handler
+  interferes with per-box selection, leaves a ragged state like
+  `['9','2','4','','','']`.
+- Clearing and typing in the same `Runtime.evaluate` call — React
+  batches the updates and merges them, rejecting the new code.
+
+### Gmail OTP extraction — proven pattern (session 3, 2026-04-24)
+
+Sender: `notifications@united.com` (or `*@united.com` — tolerate
+both). Subject: `Here's your verification code`. TTL: **5 minutes**
+from arrival. Body includes a single 6-digit number.
+
+```python
+r = await run({
+    "skill": "gmail",
+    "tool": "search_emails",
+    "params": {
+        "query": ("from:united.com "
+                  "subject:\"verification code\" "
+                  "newer_than:10m"),
+        "limit": 3,
+    },
+})
+# Response shape: r["__trace__"][1].attributes.body_preview OR
+# call gmail.get_email for full body.
+emails = sorted(r["emails"], key=lambda e: e["published"], reverse=True)
+latest = emails[0]
+# Parse: exactly one 6-digit group appears in the body
+m = re.search(r"\b(\d{6})\b", latest["body"] or latest["body_preview"])
+if not m:
+    raise RuntimeError(f"no 6-digit code found: {latest['body_preview']!r}")
+code = m.group(1)
+# Validate freshness — code expires in 5 min
+age_sec = (datetime.utcnow() - latest["published_dt"]).total_seconds()
+if age_sec > 270:  # 4.5 min to leave buffer
+    raise RuntimeError(f"code is {age_sec:.0f}s old — request a new one")
+```
+
+Edge cases observed:
+- If `search_emails` returns the email body as empty string,
+  call `get_email` on the id and inspect `__trace__` for
+  `body_preview`. United's HTML emails sometimes don't fall back
+  to plain-text cleanly through the Gmail API.
+- If two "Here's your verification code" emails arrive minutes
+  apart (because an early request "failed silently"), **always
+  pick the newest one**. The older code is invalidated by the
+  new send.
+- `newer_than:10m` scopes the query cheaply; don't pull the
+  whole inbox.
+
