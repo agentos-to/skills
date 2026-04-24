@@ -43,7 +43,9 @@ connection("portal",
     domain=".approach.app",
     client="api",
     auth={"type": "api_key",
-          "account": {"check": "check_session", "login": "login"}},
+          "account": {"check":  "check_session",
+                      "login":  "login",
+                      "logout": "logout"}},
     label="ABP Portal Session",
     help_url="https://boulderingproject.portal.approach.app/login")
 
@@ -701,4 +703,58 @@ async def login(*, email: str = "", password: str = "", **params) -> dict[str, A
             "status": "authenticated",
             "identifier": canonical,
         },
+    }
+
+
+@test.skip(reason="destructive — revokes the live Cognito session")
+@returns({"ok": "boolean", "message": "string"})
+@connection("portal")
+async def logout(**params) -> dict[str, Any]:
+    """Revoke the current Cognito session via `GlobalSignOut`.
+
+    `GlobalSignOut` invalidates every IdToken / AccessToken for this
+    user across all devices — correct for "log out" semantics. After
+    it returns, any token we persisted or handed out becomes dead at
+    Cognito; the access token's ~1h natural TTL is the only
+    remaining validity window. The refresh token is dead immediately.
+
+    The engine runs the cleanup tail (delete skill-written credential
+    rows, invalidate cache) after this returns, so we don't touch
+    `__secrets__` here. Provider rows (1Password) stay put — logout
+    forgets the session, not the password.
+
+    Idempotent: a second call hits `NotAuthorizedException` which we
+    treat as success — the session was already revoked.
+    """
+    auth = params.get("auth") or {}
+    access_token = auth.get("accessToken")
+    if not access_token:
+        # No live session to revoke — engine's cleanup tail still runs.
+        # Report ok=false so `revoked_server_side` doesn't lie: we didn't
+        # actually talk to Cognito.
+        return {"ok": False, "message": "No live access token; skipped server revoke."}
+
+    resp = await client.post(
+        COGNITO_ENDPOINT,
+        json={"AccessToken": access_token},
+        headers={
+            "Content-Type": "application/x-amz-json-1.1",
+            "X-Amz-Target": "AWSCognitoIdentityProviderService.GlobalSignOut",
+        },
+    )
+
+    # Cognito quirk: already-revoked / expired tokens return 400
+    # NotAuthorizedException. That's "done," not "failed."
+    if resp["status"] == 200:
+        return {"ok": True, "message": "Cognito session revoked."}
+
+    body = (resp.get("body") or "")[:200]
+    j = resp.get("json") or {}
+    err_type = j.get("__type") if isinstance(j, dict) else None
+    if err_type == "NotAuthorizedException":
+        return {"ok": True, "message": "Session already expired at Cognito."}
+
+    return {
+        "ok": False,
+        "message": f"Cognito GlobalSignOut failed: HTTP {resp['status']} {err_type or body}",
     }

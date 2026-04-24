@@ -1698,3 +1698,188 @@ raises RuntimeError rather than guess.
    `/api/auth/anonymous-token` and re-fetches profile. Cache both
    per-invocation (Joe flagged the 4s latency as annoying).
 
+## Sign-in flow — reverse-engineered (2026-04-24, session 3)
+
+The login UI is a React drawer (`[role=dialog][aria-modal=true]`),
+**not** a standalone page. The URL `/en/us/account/sign-in` is a
+404; the drawer is triggered by clicking `#loginButton` on any
+united.com page. This means `login` cannot deep-link to a URL —
+it must drive the homepage → click loginButton → interact with the
+drawer.
+
+### Drawer architecture — "Ciam" components
+
+The drawer's class names are prefixed `app-components-Ciam-*`
+(Customer Identity and Access Management). Main sub-components:
+
+- `Ciam-styles__containerEmbedded` — drawer body
+- `Ciam-LoginButton-loginButton` — the homepage header button that opens the drawer
+- `Ciam-ValidateOTP-styles__wfull` — OTP step's Continue button
+
+### Identifier-first, then password
+
+| Step | Selector | Field | Fires |
+|---|---|---|---|
+| 1 | `#MPIDEmailField` | Email OR MP# | `POST /xapi/auth/validate-username` |
+| 2 (if MP#) | `#password` | Password | `POST /xapi/auth/signin` |
+| 3 | 6 `input[aria-label*="digit"]` + Continue | OTP | `POST /xapi/auth/validate-mfa-otp` (TBD — need capture) |
+
+**Email vs MP#**: United's CIAM accepts both, but its back-end
+table-lookups by MP#. If the email isn't the one primarily linked
+to the MileagePlus account, step 1 returns:
+
+```json
+POST /xapi/auth/validate-username  { "userName": "anthropic@contini.co" }
+→ 200 { "status":200, "data": { "isValid": false, "multipleAccountFound": false, "errorCode": "LOGIN_WITH_MP" } }
+```
+
+`errorCode: "LOGIN_WITH_MP"` is the explicit signal "use your MP#
+instead." For Joe (XX118941), going direct with the MP# is correct.
+
+Successful validate-username returns:
+
+```json
+POST /xapi/auth/validate-username  { "userName": "XX118941" }
+→ 200 {
+    "status": 200,
+    "data": {
+      "isValid": true,
+      "multipleAccountFound": false,
+      "userName": "*****941",                              // masked for display
+      "encryptedUserName": "DAAAAEla+BeBZpyMcs20jB..."     // opaque token, threads into signin
+    }
+  }
+```
+
+### Signin POST + MFA trigger
+
+```
+POST /xapi/auth/signin
+Referer: https://www.united.com/en/us/account/sign-in
+X-Authorization-api: bearer <anonymous-token>
+Content-Type: application/json
+
+{
+  "username": "DAAAAEla+BeBZpyMcs20jB...",   // encryptedUserName from step 1
+  "password": "<cleartext>",
+  "toPersist": false                          // "Remember me" (false by default)
+}
+
+→ 202 Accepted  {
+  "status": 202,
+  "data": {
+    "token": {
+      "hash": "DAAAAPfKW+o2hTaciCu...",
+      "expiresAt": "2026-04-24T13:55:15.0000000+00:00"
+    },
+    "encryptedUserName": "DAAAAGPF5Q6GlQ2wG...",   // ROTATED — use this from here on
+    "mfa": {
+      "type": "OTP",
+      "default": "Phone",
+      "email": "u****d@contini.co",
+      "phone": "******3195",
+      "voice": "******3195",
+      "totp": "unitedapp"
+    }
+  }
+}
+```
+
+- HTTP 202 ("Accepted") is the happy-path signal — "creds OK, now
+  MFA." 200 would mean authenticated-no-MFA (not yet observed for
+  this account).
+- `token.hash` is the bearer to use for subsequent MFA-step calls.
+- `encryptedUserName` is rotated — re-read it from each response.
+- `mfa.*` keys list available methods (masked for display).
+
+### MFA method selection
+
+If the default (Phone/text) is fine, the SMS auto-dispatches with
+the 202 and the UI shows the 6-digit code inputs directly. If you
+want a different method, click **"try a different way"** (pure
+client-side state change, no XHR) → radios appear with `value`:
+
+| Label | Radio value | Delivery |
+|---|---|---|
+| Text: ******3195 | `Phone` | SMS to phone on file |
+| Email: u****d@contini.co | `Email` | Email to address on file |
+| Voice call: ******3195 | `Voice` | Automated phone call |
+| United app | `Totp` | UnitedApp TOTP code |
+
+Click the radio → click Continue → server fires the delivery (TBD
+capture). For Joe, SMS arrived on the first 202 without any
+follow-up click; the second-click flow was only needed after
+error.
+
+### Observed error mode: "Verification code not sent"
+
+**Symptom**: after clicking "try a different way" → selecting Text
+→ Continue, modal shows `Verification code not sent. Try again.`
+but **no XHR fires**.
+
+**Root cause hypothesis**: the `token.hash` from the signin 202 is
+single-use. On the first 202 it carries an implicit "send SMS to
+default method" action. Once consumed (either by the auto-send or
+by a Resend attempt within the client-side rate-limit window),
+subsequent triggers need a fresh signin — but the UI doesn't
+re-enable the password field.
+
+**Workaround**: if you see "Verification code not sent", kill the
+drawer (close via the X button) and restart the identifier +
+password sequence. The fresh 202 will send SMS automatically.
+
+Also: the UI shows `"Wait 1 minute before requesting a new code."`
+as an informational banner after any OTP send — this is a pure
+client-side countdown, not a server-side block.
+
+### Gotchas (CDP driving)
+
+- `form.requestSubmit()` beats `button.click()` for React
+  submit-type buttons. A plain `.click()` often short-circuits
+  without firing the form's submit event (and thus no XHR).
+- React controlled inputs: set the value via the prototype's
+  native setter, then dispatch `input` + `change` events. The
+  "type into field" pattern from other skills applies here.
+- `#loginButton` is always in the DOM on any united.com page
+  (header navbar). To open the sign-in drawer from any URL, click
+  it rather than navigating to `/en/us/account/sign-in` (which is
+  a 404).
+- The drawer sits **atop** the homepage — keep the underlying tab
+  on `https://www.united.com/en/us` so the drawer renders
+  correctly. Deep-linking to any other page also opens the drawer
+  successfully but leaves "Page not found" or whatever behind it.
+
+### Open items (need capture)
+
+1. **`POST /xapi/auth/validate-mfa-otp`** (suspected path) — the
+   endpoint fired on Continue after typing the 6-digit code. Body
+   likely carries `{ "otp": "123456", "token": <hash>, "type": "OTP" }`.
+   Response likely sets the session cookies (`AuthCookie`,
+   `Session`, `User`, etc.) via `Set-Cookie`.
+2. **The send-code endpoint** when picking a non-default MFA
+   method. Probably `POST /xapi/auth/send-mfa-otp` or similar.
+3. **`toPersist: true` behavior** — does it set a different
+   `remember me` cookie or just extend `User.RememberID` TTL?
+4. **TOTP (`value: "Totp"`) flow** — does the UI pop an input for
+   the UnitedApp code, or redirect to a deep-link?
+
+## CDP drive lessons (session 3, 2026-04-24)
+
+- **Dual-client Network.enable race.** Two separate Python
+  processes both `Network.enable`ing the same page target produces
+  silent event loss — only one session gets events. Fix: unified
+  single-process driver (`/tmp/ua_flow.py`) that does capture +
+  commands on one WS.
+- **`Storage.clearDataForOrigin`** fails at browser-level target
+  (`Internal error`). Use `Network.getCookies` + `Network.deleteCookies`
+  at a page-level target instead, or CDP to a specific tab's
+  Network domain.
+- **Fresh tab = fresh Akamai signal.** After clearing cookies and
+  opening a new tab, the identifier-first flow fired a clean 202
+  signin response with SMS auto-dispatch. The "Verification code
+  not sent" error on a re-used session didn't reproduce on a
+  fresh one.
+- **`#loginButton` is in the DOM on every united.com page** — no
+  reason to navigate to any specific URL before opening the login
+  drawer.
+
