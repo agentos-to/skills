@@ -1300,3 +1300,401 @@ A paid non-Basic fare (Standard Economy $260+) unlocks free seat
 selection in Main Cabin. Worth surfacing this in `get_seatmap`'s
 return — add a `freeEconomySeatsAvailable: boolean` derived by
 checking if any non-paid tier has `eligibility` matching "Eligible".
+
+## Round-trip booking — what we actually learned (2026-04-23 session 2)
+
+### The round-trip cart signal (open mystery)
+
+Body-only HTTP replay cannot create a `SearchType: 2` (round-trip)
+cart. We tried, in escalating combinations:
+
+- `Trips[0].TripIndex: 2` + `UsePassedCartId: true` in the search body
+- `Referer: .../fsr/choose-flights?...&r=<return>&sc=7,7&tt=1&...`
+- `Characteristics[].fsrQueryParam` echoed in the RegisterFlights body
+- `POST /api/FlexPricer/CalendarPricing` priming call with `IsOneway: false`
+  **before** the search (this is what the SPA fires from the homepage
+  when the user picks dates; it carries `Return: 05032026` and
+  `Depart: 04282026` in the body)
+
+All four together still produce `SearchType: 1` (one-way) carts. The
+server-side bit that flips a cart to round-trip is **not reachable from
+our HTTP client's vantage point** via any signal we've identified.
+Suspects not yet ruled out:
+
+- A session-scoped server-side attribute set during the homepage nav
+  itself (a cookie, or a server-side session var).
+- The `pst=NXo%3D-G-C` param in the round-trip choose-flights URL —
+  this is "page state token", opaque, likely has the round-trip flag
+  baked in via HMAC or similar.
+- Ordering: the SPA fires `CalendarPricing` *before* the navigation
+  POST to `/en/us`, not after.
+
+What DOES work: drive the SPA via CDP from the homepage (click the
+round-trip radio, fill origin/destination/dates via `setDepart`/`setReturn`
+on the datepicker fiber, click "Find flights"). The resulting cart
+becomes round-trip. Everything else — `select_flight`, `register_traveler`,
+`get_seatmap`, `get_cart` — works pure-Python against that cart.
+
+### The two-variant search body
+
+The SPA uses two different FetchSSENestedFlights body shapes:
+
+- **Outbound (idx=1)**: `SearchTypeSelection: 1` with full `Trips[0]`
+  (origin, destination, depart date, fare family). Standard shape.
+- **Return (idx=2, existing cart)**: `SearchTypeSelection: 3` with
+  `Trips: []` (empty). The server fills in the slice from the cart's
+  committed outbound. `RecentSearchKey` must be empty.
+
+`search_flights` now emits the type-3 variant when `cart_id` is passed
+with `trip_index >= 2`. It's necessary for the return search to stay on
+the same cart — a type-1 return search allocates a fresh cart instead.
+
+### CalendarPricing priming endpoint
+
+```
+POST /api/FlexPricer/CalendarPricing
+Referer: https://www.united.com/en/us
+{
+  "UserSelected": true,
+  "Depart": "04282026",          // MMDDYYYY
+  "Return": "05032026",          // MMDDYYYY
+  "Origin": "AUS",
+  "Destination": "SFO",
+  "IsAward": false,
+  "ClientCurrentDate": "",
+  "IsPremium": false,
+  "IsOneway": false,             // ← the one that looks like it should matter
+  "ExcludeBasicEconomy": false,
+  "Travelers": { "Adult": 1, "Senior": 0, "Infant": 0, "InfantOnLap": 0,
+                 "Children01": 0, "Children02": 0, "Children03": 0, "Children04": 0 }
+}
+```
+
+Fires from homepage when dates are picked. We wired `search_flights`
+to call this before the actual flight search when `return_date` is
+set — doesn't flip SearchType on its own but matches the SPA's call
+chain, which is probably load-bearing for other things.
+
+### LoadReservationAndCart requires SPA's query params
+
+Calling `/api/ShoppingCart/LoadReservationAndCart?cartId=<UUID>` with
+just `cartId` returns a generic `{"Error":{"Errors":[{"Message":"We're
+sorry, we are having connection issues. Please try your transaction
+again."}]}}`. The SPA sends additional query params the server expects:
+
+```
+GET /api/ShoppingCart/LoadReservationAndCart
+  ?cartId=<UUID>
+  &workFlowType=1
+  &clearBundles=false
+  &clearSeats=false
+  &isConfirmationPage=false
+```
+
+With those, it returns 200 with the full cart. Response envelope is
+`Data.CartData.DisplayCart`, not `Data.DisplayCart` (different nesting
+from RegisterFlights/RegisterTravelers responses — accept both in
+parsing). This is wired in `get_cart`.
+
+### Booking flow — complete page + endpoint map (2026-04-23)
+
+Verified end-to-end on cart `76695CE3`. Page sequence AFTER a round-trip
+cart is born (via SPA drive on homepage):
+
+| # | URL / Endpoint | Trigger | What it does |
+|---|---|---|---|
+| 1 | `/fsr/choose-flights?...&sc=7,7` | Homepage form submit | Fires `CalendarPricing` (prime) + first `FetchSSENestedFlights` (outbound search). Cart is born in the meta event of the search. |
+| 2 | click outbound fare → Basic toggle → Select | User click | POST `/api/flight/NestedCabinEntitlements` (prefetch), then POST `/api/flight/RegisterFlights` with `TripIndex:1`. URL transitions to `idx=2`. |
+| 3 | `/fsr/choose-flights?...&idx=2&cartId=...` | Auto-nav from idx=1 select | Second `FetchSSENestedFlights` with `SearchTypeSelection:3` + empty Trips — server picks the return slice from cart context. |
+| 4 | click return fare → Select | User click | POST `/api/flight/RegisterFlights` with `TripIndex:2`. URL transitions to `/traveler/choose-travelers?cartId=...&tqp=R`. |
+| 5 | `/traveler/choose-travelers?cartId=...` | Auto-nav after 2nd Register | The SPA pre-fills traveler name/DOB/contact from `/xapi/myunited/User/profile`. Continue button submits `/api/ShoppingCart/RegisterTravelers`. Response includes full `DisplayCart` with `SearchType:2`, `GrandTotal`, both `DisplayTrips[]`. |
+| 6 | `/book-flight/customizetravel/<cartId>?tqp=R` | Auto-nav after RegisterTravelers | "Travel add-ons" page — 3 bundle offers per slice. On Basic Economy you want to decline; the button is labeled **"Continue to seats"** (not "Skip" or similar). |
+| 7 | `/book-flight/seatmap/<cartId>?tqp=R` | Auto-nav after bundles | Seat picker. For Basic Economy, seats are paid-only or skip. Skip proceeds to payment. |
+| 8 | `/book-flight/payment/<cartId>?tqp=R` (next) | Seatmap next | Payment page. NOT YET CAPTURED. |
+| 9 | POST `/api/ShoppingCart/checkout` (suspected) | Payment submit | NOT YET CAPTURED. |
+
+### Critical UI selectors (for future CDP drive)
+
+All validated 2026-04-23:
+
+- **Homepage round-trip radio**: `input[name=flightType][value=roundTrip]` (pre-selected by default)
+- **Datepicker React fiber trick**: walk fiber up from `#DepartDate` until you find a fiber whose `memoizedProps` has both `setDepart` and `setReturn` — call with native `Date` objects. Displays populate but form validation rejects the state, so prefer calendar clicks.
+- **Calendar day cells**: inside `<table aria-label="April 2026">` etc. Cells past today have `aria-label=null` and text like `"28\n$373"`. `.click()` works.
+- **Find flights submit**: `button[aria-label="Find flights"]` — after calendar clicks the state is valid, submit works.
+- **Fare panel "From $XXX" button** for a flight: walk up from a text-node matching `^UA\s*<num>\s` until you find an ancestor with >3 buttons, then find `b.innerText.replace(/\s+/g,'') === 'From$XXX'`.
+- **"Basic Economy works for me" toggle**: `label[aria-label="Basic Economy works for me."]` — required before the Basic Select button enables.
+- **Basic Select button**: `button[aria-label="Select United Economy Basic (Most restrictive)"]`.
+- **Round-trip return select**: only the first Basic select panel has the works-for-me toggle; on return slice it may be auto-enabled (seen once).
+- **Continue (traveler page)**: `button[type=submit]` with text "Continue" whose ancestor is `#parentCommonShoppingCartContainer`. **`.click()` and real `Input.dispatchMouseEvent` BOTH failed to advance the page when we were RE-landing on the traveler page post-RegisterTravelers** — cart was already past that step server-side. Solution: navigate directly to `/book-flight/customizetravel/<cartId>?tqp=R`.
+- **"Continue to seats"**: on customize-travel page. Plain `.click()` may or may not work; real `Input.dispatchMouseEvent` at element coords works reliably.
+
+### Cart lifecycle observations
+
+- Multiple carts can coexist per session. Each successful RegisterFlights
+  on a fresh search mints a new cartId. Old carts idle until they expire
+  (~5–15 min of inactivity observed; requirements.md:910 mentions ~5min
+  but we held `76695CE3` for ~30min and it was still alive).
+- `LoadReservationAndCart` returning the "connection issues" error ≠
+  cart dead — it can mean the cart is missing query params OR the
+  request needs a Referer. Dead-cart is a different response.
+- `/traveler/` page sends `/api/auth/signout` if the user sits idle on
+  it — that's what kills sessions, not the cart itself.
+
+### Resume behavior
+
+Re-navigating to `/traveler/choose-travelers?cartId=<cartId>` on a cart
+that's already past RegisterTravelers simply re-renders the traveler
+page with pre-filled data but **does not re-submit**. The Continue
+button on re-landing does nothing because the cart state is already
+past that step. To advance, navigate directly to the next page's URL
+(`/book-flight/customizetravel/<cartId>`).
+
+### Skip-the-browser hybrid (actually shipping)
+
+Given the `SearchType:2` mystery, the realistic shape for a
+pure-Python booking is:
+
+1. `prepare_round_trip_cart(origin, dest, depart, return_date)` — uses
+   CDP to drive the SPA homepage→choose-flights to create a round-trip
+   cart. Returns the cart_id.
+2. Everything else via pure HTTP:
+   - `search_flights(cart_id=..., trip_index=1)` — get outbound offers for the active cart
+   - `select_flight(..., trip_index=1)` — commit outbound
+   - `search_flights(cart_id=..., trip_index=2)` — get return offers (type-3 body)
+   - `select_flight(..., trip_index=2)` — commit return
+   - `register_traveler(cart_id=...)`
+   - `get_cart(cart_id=...)` — snapshot anytime
+   - `continue_to_bundles(cart_id=...)` — no-op on our end (server auto-advances)
+   - `skip_bundles(cart_id=...)` — call whatever endpoint the "Continue to seats" button fires. TODO capture.
+   - `skip_seats(cart_id=...)` — call whatever endpoint the seatmap "skip" button fires. TODO capture.
+   - `submit_payment(cart_id=..., payment_method_id=...)` — the final `POST /api/ShoppingCart/checkout`. TODO capture body.
+
+Until those TODOs are captured, driving the last 2-3 clicks via CDP is
+the pragmatic path. That's what we did this session.
+
+## Session 2 discoveries (2026-04-23 evening)
+
+### Full checkout page capture
+
+Drove cart `76695CE3-015A-46F7-84DD-AFF523E427F3` end-to-end:
+`/traveler/` → `/book-flight/customizetravel/<cartId>?tqp=R`
+→ `/book-flight/seatmap/<cartId>?tqp=R` → `/book-flight/checkout/<cartId>?tqp=R`.
+
+**Page-advance buttons** (verified working via `Input.dispatchMouseEvent`
+at element coordinates; plain `.click()` sometimes fails when the button
+isn't in a form):
+
+| Page | Button text | Button aria / selector | Fires |
+|---|---|---|---|
+| `/traveler/` | "Continue" | `button[type=submit]` inside `#parentCommonShoppingCartContainer` | `/api/ShoppingCart/RegisterTravelers` (already captured) |
+| `/customizetravel/` | "Continue to seats" | `button[type=submit]` matching innerText | Auto-advance to `/seatmap/` (no new backend call observed on skip) |
+| `/seatmap/` | "Continue to checkout" | `button` matching innerText | Auto-advance to `/checkout/` |
+| `/checkout/` | "Agree and purchase" | `button` containing `<span>Agree and purchase</span>` | **NOT YET CAPTURED** — POSTs to the final charge endpoint |
+
+**Critical on checkout page**: after clicking Purchase, the insurance
+offer appears **in-page** (not a new page). Must select "No, I will
+not travel without this insurance" + click Next to unblock the
+Purchase button. Joe clicked it live; the resolved state persists.
+
+### Saved cards endpoint
+
+**`GET /api/user/creditCards`** returns all saved cards on the
+logged-in account. PCI-safe: last4, BIN, expiry, IATA 2-char code
+(AX/VI/MC/DS/DC/TP/JC/UP), opaque handles. No PAN or CVV ever.
+
+Captured shape (one card):
+```json
+{
+  "CustomerId": 53955798,
+  "CCTypeDescription": "American Express",
+  "CustomDescription": "AMEX Platinum",
+  "Code": "AX",
+  "ExpMonth": 12, "ExpYear": 2027,
+  "AccountNumberLastFourDigits": "1007",
+  "AccountNumberMasked": "American Express  **1007",
+  "PersistentToken": "473009498861007",
+  "AccountNumberToken": "a66ced2d-1749-4b03-9326-e005a9bfe0a0",
+  "Key": "0ATu79Wy0J4wgmp2iAaMYpAdnpVTDCVosnsOpFCVaMRFmV96+W2AOt+SLGMWhjklZ3Gu3McsCIA0CVO7u3ZnXs4cr/zkDNCsP9xIctZpc6s=",
+  "AddressKey": "...",
+  "ExpirationDate": "12/31/2027",
+  "Payor": {"GivenName": "Giuseppe Contini"},
+  "IsDefault": false, "IsPrimary": false, "IsSelected": false
+}
+```
+
+Three cards on Joe's account:
+- **2005** — American Express (no custom description) — currently default-selected on checkout
+- **1007** — American Express (custom name "AMEX Platinum")
+- **9768** — MasterCard (custom name "AncestryPass Debit")
+
+Three opaque handles per card that thread into the checkout POST:
+`Key`, `AccountNumberToken`, `PersistentToken`. Skill stores all three
+in `payment_method.providerTokens`.
+
+### Eligible forms of payment endpoint
+
+**`POST /api/payment/GetEligibleFOP`** returns the payment method
+TYPES eligible for a specific cart (VI, MC, AX, DS, DC, TP, JC, UP,
+MPVI, PP, PZ, AP, TC). Request body mirrors the cart + passenger
+shape. Response lists per-type rules: SortOrder, ForceReserveHours,
+HoldTimeHours, TimeToLive. Doesn't pick the actual card — that's
+still in the cart's selected-card state.
+
+**`POST /api/FlexPricer/CalendarPricing`** — prime call fired from
+homepage when dates are picked. Body carries `IsOneway: false` +
+Depart/Return dates. Wired into `search_flights` when `return_date`
+is set. Doesn't flip SearchType on its own (tested) but matches the
+SPA's call chain.
+
+**`POST /api/Payment/GetTermsAndConditions`** — checkout T&C text.
+**`POST /api/Payment/GetCreditsFromSession`** — travel credits on account.
+**`POST /api/Payment/IsPartnerProvisionEnabled`** — Chase/partner flags.
+**`POST /api/Products/OfferDetail`** — bundle offer detail.
+**`POST /api/CCEProducts/Coupons/get-coupon-popup`** — coupons popup.
+**`POST /api/ShoppingCart/RegisterLoyaltyCertificate`** — apply LCR.
+**`GET /api/user/creditCards`** — saved cards list (see above).
+**`GET /api/user/addresses`** — saved addresses (billing + shipping).
+**`GET /api/user/emailAddresses`** — saved emails.
+**`GET /api/user/phoneNumbers`** — saved phones.
+**`GET /api/User/AccountStatus`** — account posture / eligibility.
+**`GET /api/User/PublicKeyNonPCI`** — RSA public key for non-PCI field encryption.
+
+### Redux store on the checkout page
+
+The SPA keeps a Redux store accessible via any child fiber:
+```js
+const dep = document.getElementById('DepartDate');  // or any component
+const fiberKey = Object.keys(dep).find(k => k.startsWith('__reactFiber'));
+let cur = dep[fiberKey];
+while (cur && !(cur.memoizedProps && cur.memoizedProps.store && cur.memoizedProps.store.getState)) cur = cur.return;
+window.__uaStore__ = cur.memoizedProps.store;
+// Later:
+const state = __uaStore__.getState();
+const cp = state.commonpayment;  // all selected payment state
+```
+
+`commonpayment` slice top-level keys:
+- `autoRenew`, `billingAddress1/2/3`, `city`, `state`, `zipCode`, `country`, `countryCode`
+- `phoneNumber`, `email`
+- `cardInfo` (always empty when a saved card is selected)
+- `savedCard` (the full selected card object with `id`, `key`, `lastFourDigits`, etc.)
+- `savedEmailAddress`, `savedBillingAddress`, `savedPhoneNumber` (each with full provider keys)
+- `taxIdType`, `taxIdNumber`, `taxIdHolder`, `chaseDifferentCard`
+- `spouseMPNumber`, `idType`, `idNumber`
+
+### Rich tax breakdown location
+
+`Data.CartData.DisplayCart.DisplayPrices[0].SubItems[]` — each entry
+has `Key` (0-based index), `Description`, `Amount`. Verified 8 items
+for a domestic round-trip totaling $61.05:
+
+| # | Description | Amount | Binding |
+|---|---|---|---|
+| 0 | U.S. Transportation Tax | $13.54 | outbound segment |
+| 1 | U.S. Transportation Tax | $16.71 | return segment |
+| 2 | U.S. Passenger Facility Charge | $4.50 | origin airport (AUS) |
+| 3 | U.S. Flight Segment Tax | $5.30 | outbound |
+| 4 | Passenger Civil Aviation Security Service Fee | $5.60 | outbound |
+| 5 | U.S. Passenger Facility Charge | $4.50 | origin airport (SFO) |
+| 6 | U.S. Flight Segment Tax | $5.30 | return |
+| 7 | Passenger Civil Aviation Security Service Fee | $5.60 | return |
+
+### Short CartRefId
+
+The human-friendly cart ID shown on the page ("Cart ID: 641457887")
+lives at `Data.CartData.CartRefId`. NOT the same as the long UUID
+`DisplayCart.CartId` — both are returned in every LoadReservationAndCart
+response. Surface both; users remember the short one.
+
+### Aircraft / airport enrichment
+
+Every DisplayTrips[].Flights[] entry has:
+- `EquipmentDisclosures.EquipmentType` (IATA 3-char: "738", "7M8")
+- `EquipmentDisclosures.EquipmentDescription` ("Boeing 737-800")
+- `OriginDescription` ("Austin, TX, US (AUS)")
+- `OriginCountryCode`, `OriginStateCode`, `OrgTimezoneOffset`
+- Same for `Destination*` fields
+
+Skill now parses these into proper `aircraft` (with `manufacturer:
+organization`) and `airport` (with city, countryCode, region) nodes.
+Manufacturer lookup table is IATA equipment code → organization node;
+only populated for codes actually observed to avoid fabricating data.
+
+### Captured files for future reference
+
+- `/tmp/checkout-intercept.json` — full Network capture of checkout
+  page load + seat page + customize-travel page (89 requests)
+- `/tmp/rt-intercept.json` — earlier one-way intercept for comparison
+- `/tmp/rt3-intercept.json` — round-trip homepage form drive (partial)
+
+## Booking confirmation gate (new in session 2)
+
+`prepare_booking(cart_id)` and `confirm_booking(blob, confirm_amount,
+payment_method_last4, dry_run=True)` implement a two-step commit.
+See the docstrings in `united.py` for the full contract.
+
+**HMAC key persistence**: the signing key lives at
+`~/.agentos/united-booking-key` (atomic write, 0o600 perms). First
+call mints it; subsequent calls reuse. `skill_secret.get/set` is
+attempted first but doesn't always persist across invocations, so
+the file is the authoritative store.
+
+**Gates enforced by `confirm_booking`**:
+1. Blob signature verifies (HMAC-SHA256 with persisted key)
+2. Blob not expired (5 min TTL)
+3. `confirm_amount` EXACT string match to blob total ("USD 464.36")
+4. Live cart total hasn't drifted since prepare_booking
+5. `payment_method_last4` matches a card from `/api/user/creditCards`
+6. `dry_run` must be explicitly `False`
+
+Current state: **all gates verified working via dry_run tests**.
+Real checkout POST body shape is not yet captured, so `dry_run=False`
+raises RuntimeError rather than guess.
+
+## Session 3 starting state (pick-up checklist)
+
+### What's shipped and tested
+- Round-trip booking flow works end-to-end via SPA drive (homepage form
+  → Find flights → outbound select → return select → traveler → customize
+  → seatmap → checkout) with cart `76695CE3-015A-46F7-84DD-AFF523E427F3`
+  kept alive for ~45min, SearchType=2, GrandTotal $464.36.
+- `get_cart(cart_id)` works pure-Python (with the correct query params)
+- `select_flight` supports round-trip Referer + trip_index
+- `search_flights` supports CalendarPricing prime + type-3 return-slice body
+- `register_traveler` works on round-trip carts
+- `get_seatmap` + `render_seatmap` work on both legs
+- `prepare_booking` returns rich `booking_offer` node with itinerary,
+  fares, tax_lines, payment_method, signed blob — **depends on a live
+  authenticated session**
+- `confirm_booking` gates all verified via dry_run
+
+### What's still open
+1. **United login is no longer active** — first task of session 3 is
+   to re-authenticate. Either: (a) Joe logs in on Brave manually, then
+   `store_session_cookies` refreshes credentials, or (b) write a
+   proper `login(cdp_port=9222)` tool that opens a CDP-driven sign-in
+   flow. The skill has stubs that mention this but the tool isn't
+   actually implemented yet.
+2. **Capture the final checkout POST body shape.** The endpoint is
+   suspected to be `/api/ShoppingCart/checkout` or similar. Options:
+   - (A) Drive Agree-and-Purchase for real with intercept — books
+     the flight ($464.36) and learns the shape; or
+   - (B) CDP `Fetch.enable` scoped to checkout URLs + abort after
+     capture — learns shape without booking. Script stub written at
+     `/tmp/ua_pause_checkout.py` last session.
+3. **Wire the checkout POST into `confirm_booking` dry_run=False path**
+   once body shape is known.
+4. **Seat selection**: Joe wants to be able to pick an aisle seat.
+   `/book-flight/seatmap/<cartId>` URL and `register_seats` tool
+   already exist. Need a skill tool to go back to seatmap from
+   checkout page (just nav + click logic).
+5. **`clear_cart`** — not yet captured. Click "Start Over" in UI with
+   intercept running.
+6. **`search_flights` pure-Python round-trip mystery**: even with
+   CalendarPricing prime + `sc=7,7` Referer + type-3 body, carts
+   born via pure HTTP end up SearchType=1. Must CDP-drive the
+   homepage form once to mint a SearchType=2 cart. Unsolved.
+7. **Skill performance**: every tool call mints a fresh bearer via
+   `/api/auth/anonymous-token` and re-fetches profile. Cache both
+   per-invocation (Joe flagged the 4s latency as annoying).
+
