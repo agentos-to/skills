@@ -1,12 +1,58 @@
 ---
+id: reverse-engineering
 name: reverse-engineering
 description: Systematically analyze and document how software systems work internally. Use when you need to understand closed-source systems, third-party integrations, or undocumented APIs.
+capabilities:
+  - http
+color: "#4a2a6b"
 ---
 
 # Reverse Engineering Skill
 
-**Load this skill before doing ANY reverse engineering work.** Read the principles below
-and the linked docs before writing code. Every violation of these principles costs hours.
+**Load this skill before doing ANY reverse engineering work.** Read the
+principles below and the linked docs before writing code. Every violation
+of these principles costs hours.
+
+This skill is **both a playbook and a toolkit.** The prose below codifies
+the golden principles every RE session should follow; the tools (see
+[Toolkit](#toolkit)) give you the runtime machinery to execute them.
+The principles tell you *when* to reach for each tool.
+
+Work is phased — see
+[`_roadmap/p2/browser-stack/reverse-engineering-skill.md`](../../../_roadmap/p2/browser-stack/reverse-engineering-skill.md)
+for scope and progress. Phases 2–5 add capture / replay / JS toolkit /
+storage / inspection tools; Phase 1 (this commit) ships the skeleton and
+one placeholder tool to prove the skill-authoring path.
+
+## Toolkit
+
+The RE skill ships Python tools you can call from any agent context
+(`run({skill:"reverse-engineering", tool:"..."})`) — plus a browser-side
+`toolkit.js` injected via CDP for in-page work. Python owns orchestration
+and result handling; JS owns DOM/fetch/storage inside the target page.
+
+**Available now (Phase 1):**
+
+| Tool | Purpose |
+|---|---|
+| `inspect_page(url)` | Navigate to `url` in the live browser, return basic page metadata (title, final URL, bundle references). Minimal smoke test; real inspection ships in Phase 5. |
+
+**Coming in later phases:**
+
+| Tool | Phase | Purpose |
+|---|---|---|
+| `capture(url, duration, actions)` | 2 | Wrap `browse-capture.py`. Navigate, record XHR/fetch/WS, capture response bodies. Writes a `capture` entity to the graph. |
+| `replay(request, cookies)` | 2 | Re-issue a captured request via `agentos.http` — proves the RE hypothesis outside the browser. |
+| `find_bundles(url, patterns)` | 2 | Fetch the page, grep JS bundles for patterns (API keys, pool IDs, endpoint templates). The `_discover_config` pattern from ABP, generalized. |
+| `hook_fetch(url, pattern, duration)` | 3 | Inject `toolkit.js`, hook matching fetch/XHR, stream events. |
+| `dump_storage(url, kinds)` | 3 | Snapshot cookies / localStorage / sessionStorage / IndexedDB for the page. |
+| `eval(url, js, wait_for)` | 3 | Navigate, optionally wait for a selector, run `Runtime.evaluate`, return serialized result. Escape hatch. |
+| `inspect_page(url)` (rich) | 5 | Detect frameworks (React/Vue/Angular/Next), dump Apollo/Redux state, extract GraphQL ops. |
+
+Each tool writes the artifact it produces (capture session, inspection
+snapshot) to the graph with domain + timestamp, so
+`search({query: "<service name>"})` finds everything previously learned
+about that target.
 
 ## Golden Principles
 
