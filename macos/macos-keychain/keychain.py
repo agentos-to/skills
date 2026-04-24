@@ -115,7 +115,7 @@ async def _find_entry(host: str, account: str | None) -> tuple[dict[str, str], s
     return attrs, pwd
 
 
-@returns({"provided": "boolean", "identifier": "string"})
+@returns("credential")
 @provides(login_credentials, description="Reads {email, password} pairs from the macOS login Keychain")
 @connection("local")
 async def get_credentials(

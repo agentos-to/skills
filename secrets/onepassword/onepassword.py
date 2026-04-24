@@ -204,7 +204,7 @@ async def _find_login_candidates(domain: str, account: str | None) -> list[dict]
     return [i for (i, _) in scored]
 
 
-@returns({"provided": "boolean", "identifier": "string"})
+@returns("credential")
 @provides(login_credentials, description="Reads {email, password} from 1Password Login items matching a domain")
 @connection("local")
 async def get_credentials(
