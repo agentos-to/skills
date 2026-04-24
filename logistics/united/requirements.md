@@ -1721,8 +1721,11 @@ The drawer's class names are prefixed `app-components-Ciam-*`
 | Step | Selector | Field | Fires |
 |---|---|---|---|
 | 1 | `#MPIDEmailField` | Email OR MP# | `POST /xapi/auth/validate-username` |
-| 2 (if MP#) | `#password` | Password | `POST /xapi/auth/signin` |
-| 3 | 6 `input[aria-label*="digit"]` + Continue | OTP | `POST /xapi/auth/validate-mfa-otp` (TBD — need capture) |
+| 2 (if MP#) | `#password` | Password | `POST /xapi/auth/signin` (202 + default OTP auto-send) |
+| 2a (optional) | `button "try a different way"` | — | — (pure client state) |
+| 2b (optional) | `input[type=radio][value=Phone|Email|Voice|Totp]` + Continue | MFA method | `POST /xapi/auth/send-otp  {mfaChannelType: "Email"|"Phone"|"Voice"|...}` |
+| 3 | 6 `input.atm-c-otp-input` + Continue | OTP | `POST /xapi/auth/validate-otp  {mfaChannelType, otp, isRememberDevice}` |
+| 3a (optional) | `label "Don't require verification code again"` checkbox | Remember this browser | toggles `isRememberDevice` in step 3 body |
 
 **Email vs MP#**: United's CIAM accepts both, but its back-end
 table-lookups by MP#. If the email isn't the one primarily linked
@@ -1849,19 +1852,223 @@ client-side countdown, not a server-side block.
   correctly. Deep-linking to any other page also opens the drawer
   successfully but leaves "Page not found" or whatever behind it.
 
-### Open items (need capture)
+### Captured: `POST /xapi/auth/send-otp`  (MFA channel selection)
 
-1. **`POST /xapi/auth/validate-mfa-otp`** (suspected path) — the
-   endpoint fired on Continue after typing the 6-digit code. Body
-   likely carries `{ "otp": "123456", "token": <hash>, "type": "OTP" }`.
-   Response likely sets the session cookies (`AuthCookie`,
-   `Session`, `User`, etc.) via `Set-Cookie`.
-2. **The send-code endpoint** when picking a non-default MFA
-   method. Probably `POST /xapi/auth/send-mfa-otp` or similar.
-3. **`toPersist: true` behavior** — does it set a different
-   `remember me` cookie or just extend `User.RememberID` TTL?
-4. **TOTP (`value: "Totp"`) flow** — does the UI pop an input for
-   the UnitedApp code, or redirect to a deep-link?
+Fires when the user clicks "try a different way" → picks a
+non-default method → Continue. Body carries just the channel type;
+the server looks up recipient from the profile attached to the
+signin-token on the session.
+
+```json
+POST /xapi/auth/send-otp
+Referer: https://www.united.com/en/us
+X-Authorization-api: bearer <signin-token>
+Content-Type: application/json
+
+{ "mfaChannelType": "Email" }    // or "Phone" | "Voice" | "Totp"
+
+→ 200 {
+    "status": 200,
+    "data": {
+      "mfa": {
+        "type": "OTP", "default": "Email",          // rotated to match request
+        "email": "u****d@contini.co",
+        "phone": "********3195",
+        "voice": "********3195",
+        "totp": "unitedapp"
+      },
+      "status": "Success"
+    }
+  }
+```
+
+### Captured: `POST /xapi/auth/validate-otp`  (final auth)
+
+```json
+POST /xapi/auth/validate-otp
+Referer: https://www.united.com/en/us
+X-Authorization-api: bearer <signin-token>
+Content-Type: application/json
+
+{
+  "mfaChannelType": "email",          // LOWERCASE here — note divergence from send-otp
+  "otp": "345318",
+  "isRememberDevice": false
+}
+
+→ 200 {
+    "status": 200,
+    "data": {
+      "token": {
+        "hash": "DAAAAC2s0XKi50zM6...",
+        "expiresAt": "2026-04-24T16:21:18.0000000+00:00"
+      },
+      "encryptedUserName": "DAAAADB9x3Ri5U...",     // rotated again
+      "profile": {
+        "CustomerId": 53955798,
+        "ProfileId": 19218370,
+        "ProfileOwnerId": 53955798,
+        "Travelers": [ ... ]
+        // full profile block; session cookies (AuthCookie, User,
+        // MPSessionID, etc.) are also set via Set-Cookie on this response
+      }
+    }
+  }
+```
+
+**Case sensitivity gotcha:** `send-otp` takes `Email`/`Phone`/…
+(TitleCase); `validate-otp` takes `email`/`phone`/… (lowercase).
+Normalize both.
+
+**`isRememberDevice: true`** — toggling the "Don't require
+verification code again" checkbox in the OTP step flips this bool
+in the validate-otp body. Not captured yet, but worth clicking on
+every successful login: sessions last longer and re-auth skips
+OTP on the same device. Add as an argument to `verify_login_code`
+(default `True` for autonomous use; bias toward the long-lived
+state). Need a follow-up capture of a `{isRememberDevice: true}`
+response to confirm whether it sets a different cookie or just
+extends `User.RememberID` TTL.
+
+### Open items (still need capture)
+
+1. **`toPersist: true`** at `/xapi/auth/signin` — the pre-OTP
+   remember-me toggle. Same question: different cookie or
+   extended TTL?
+2. **TOTP (`value: "Totp"`) flow** — does the UI pop a 6-digit
+   code input for UnitedApp, or redirect to a deep-link?
+3. **`validate-otp` with `isRememberDevice: true`** — which
+   cookie changes.
+
+### Pure-Python implementation plan (login tools)
+
+Captured shapes are enough to build three skill tools, matching
+the canonical [`skills/adding-login.md` multi-step OTP
+pattern](../../../docs/src/content/docs/skills/adding-login.md):
+
+```python
+# 1) Produces credentials on a public connection.
+@connection("public")
+async def login(*, method: str = "email", remember: bool = True,
+                **params) -> dict:
+    """Kick off sign-in + send an OTP via the chosen channel.
+
+    method: "email" | "phone" | "voice" | "totp"
+    remember: toggles isRememberDevice on validate-otp later
+
+    Returns a `hint` telling the agent to poll Gmail (or
+    iMessage / phone) for the 6-digit code and then call
+    verify_login_code.
+    """
+    creds = await credentials.retrieve(
+        domain="united.com", required=["email", "password"])
+    if not creds.get("found"):
+        return skill_error("NeedsCredentials",
+                           required=["email", "password"])
+    identifier = creds["value"]["email"]     # MP# or email
+    password   = creds["value"]["password"]
+
+    # Step 1: validate-username
+    v = await http.post(
+        "https://www.united.com/xapi/auth/validate-username",
+        json={"userName": identifier},
+        headers={"X-Authorization-api": f"bearer {await _anon_bearer()}"})
+    if not v["data"]["isValid"]:
+        return skill_error("InvalidIdentifier",
+                           hint=v["data"].get("errorCode"))
+    encrypted_un = v["data"]["encryptedUserName"]
+
+    # Step 2: signin (202 + default OTP auto-send)
+    s = await http.post(
+        "https://www.united.com/xapi/auth/signin",
+        json={"username": encrypted_un, "password": password,
+              "toPersist": False},
+        headers={"X-Authorization-api": f"bearer {await _anon_bearer()}"})
+    assert s["status"] == 202
+    signin_token = s["data"]["token"]["hash"]
+
+    # Step 3 (only if method != default): POST send-otp
+    if method and method.lower() != s["data"]["mfa"]["default"].lower():
+        await http.post(
+            "https://www.united.com/xapi/auth/send-otp",
+            json={"mfaChannelType": method.title()},   # "Email", "Phone", ...
+            headers={"X-Authorization-api": f"bearer {signin_token}"})
+
+    # Stash signin_token + method in a short-lived sideband so
+    # verify_login_code can complete the flow. TTL 5min to match
+    # the OTP expiry.
+    await _stash_pending_login({
+        "signin_token": signin_token,
+        "encrypted_un": s["data"]["encryptedUserName"],
+        "method": method, "remember": remember,
+    })
+
+    return {
+        "__result__": {
+            "status": "code_sent",
+            "method": method,
+            "expiresAt": s["data"]["token"]["expiresAt"],
+            "hint": (
+                f"A 6-digit code was sent via {method}. To finish:\n"
+                f"1. Read the code from the destination "
+                f"({'Gmail' if method=='email' else 'iMessage' if method=='phone' else 'phone' if method=='voice' else 'UnitedApp'}).\n"
+                "2. Call united.verify_login_code with the code."
+            ),
+        }
+    }
+
+
+# 2) Verifies the code, completes login.
+@connection("public")
+async def verify_login_code(*, code: str, **params) -> dict:
+    pending = await _pop_pending_login()
+    if not pending:
+        return skill_error("NoPendingLogin",
+            "Call login first — no signin token on file.")
+    if not re.fullmatch(r"\d{6}", code):
+        return skill_error("InvalidCode", "must be 6 digits")
+
+    r = await http.post(
+        "https://www.united.com/xapi/auth/validate-otp",
+        json={
+            "mfaChannelType": pending["method"].lower(),  # lowercase here
+            "otp": code,
+            "isRememberDevice": pending["remember"],
+        },
+        headers={"X-Authorization-api":
+                 f"bearer {pending['signin_token']}"})
+    if r.get("status") != 200:
+        # 406 NotAcceptable = bad code; suggest regenerating.
+        return skill_error("WrongCode" if r.get("status") == 406
+                           else "OtpFailed", response=r)
+
+    # Set-Cookie headers on this response carry AuthCookie, User,
+    # MPSessionID, SID — let the ambient jar persist them via
+    # __cookie_delta__. check_session confirms.
+    session = await check_session()
+    return {"__result__": {"status": "logged_in",
+                           "identity": session.get("id")}}
+
+
+# 3) Gmail OTP lookup — keep alongside as a convenience but agents
+# can also use gmail.search_emails directly. See /tmp/get_united_otp.py
+# for the proven extraction; wrap it in a @returns-annotated tool.
+```
+
+Notes:
+- `_anon_bearer()` — United hands out an anonymous bearer to any
+  browser on page load. Reuse the helper already used by the skill
+  elsewhere (see `_ensure_bearer` in `united.py`).
+- `_stash_pending_login` / `_pop_pending_login` — keep a single
+  row in a skill-scoped table or reuse the HMAC-signed-blob
+  pattern we built for booking confirmation. 5-min TTL matches
+  OTP expiry exactly.
+- Agents using the skill will usually chain
+  `login(method="email") → gmail.search_emails → verify_login_code(code)`
+  — we can also ship a convenience `login_and_verify()` that
+  polls Gmail internally with the proven extraction pattern, for
+  the common case.
+
 
 ## CDP drive lessons (session 3, 2026-04-24)
 
@@ -1882,6 +2089,38 @@ client-side countdown, not a server-side block.
 - **`#loginButton` is in the DOM on every united.com page** — no
   reason to navigate to any specific URL before opening the login
   drawer.
+
+### Sign-in round-trip — proven drive pattern (session 3, 2026-04-24)
+
+End-to-end drive that restored the logged-in state:
+
+```
+1. Close drawer + Network.deleteCookies(united.com)  → 0 cookies
+2. Page.reload(ignoreCache=true)                     → clean DOM
+3. Click #loginButton                                → drawer opens
+4. Fill #MPIDEmailField with MP# + form.requestSubmit()
+   → POST /xapi/auth/validate-username  200 (isValid + encryptedUserName)
+5. Fill #password + form.requestSubmit()
+   → POST /xapi/auth/signin  202 (token.hash + mfa.default)
+6. Click "try a different way"                        → pure client state
+7. Click radio[value=Email] + click Continue
+   → POST /xapi/auth/send-otp {mfaChannelType:"Email"}  200
+8. Poll Gmail for new email via agentos gmail.search_emails
+   query='from:united.com subject:"verification code" newer_than:1h'
+   → age-check < 270s; regex \b(\d{6})\b from snippet
+9. clear_otp (focus last box + 8× Backspace via Input.dispatchKeyEvent)
+10. type_otp CODE (focus first box + Input.insertText per digit)
+11. [pause — human verifies readback matches visually]
+12. submit_otp CODE (readback guard + banner guard → click Continue)
+    → POST /xapi/auth/validate-otp {mfaChannelType:"email", otp, isRememberDevice}  200
+    → Set-Cookie: AuthCookie, User, MPSessionID, SID
+13. check_session → united:XX118941 isActive:true
+```
+
+Zero bad OTP submits. Zero lockouts. Full XHR capture in
+`/tmp/ua_flow_capture.json`. The Python skill can replay steps
+4,5,7,12 directly via `http.post` — no browser needed once
+`_anon_bearer` is obtained.
 
 ### OTP box handling — proven pattern (session 3, 2026-04-24)
 
@@ -1987,4 +2226,412 @@ Edge cases observed:
   new send.
 - `newer_than:10m` scopes the query cheaply; don't pull the
   whole inbox.
+
+
+## Cart lifecycle — observed behavior (session 4, 2026-04-24)
+
+United's shopping cart does **not** follow the ecommerce idle-timeout
+pattern our earlier notes assumed. Sessions 1–3 said "cart expires
+after ~5 min idle"; that's wrong for the case below. The actual rules,
+as observed, are more permissive and worth documenting in full so
+future agents don't waste time minting fresh carts when an existing
+one will do.
+
+### The zombie cart
+
+**Setup:** a round-trip cart was created via
+`/api/flight/FetchSSENestedFlights` ~30 min before this session
+started. Outbound had been searched (not committed — no RegisterFlights
+POST). Return-slice search against that cart id returned 0 offers.
+The Brave tab was left parked on
+`/fsr/choose-flights?tripIndex=2&idx=1&cartId=<id>`.
+
+**Observed after 30 min idle:**
+- `GET /api/ShoppingCart/LoadReservationAndCart?cartId=<id>` → **200**.
+  Cart is fully readable — returns DisplayCart with 0 committed flights
+  ("GrandTotal" reflects the last *searched* product, not a held one).
+- `Page.reload(ignoreCache=true)` on the parked URL → SPA re-renders
+  the outbound list (tripIndex=1 view) **despite** the URL saying
+  `tripIndex=2&idx=1`. Four UA nonstops rendered, round-trip totals
+  ($373 Basic / $473 Economy / $716 Economy Plus / $1,293 First).
+- The cart's round-trip context (AUS→SFO 04-28/05-03) survived the
+  reload. No re-priming needed. No fresh `FetchSSENestedFlights` call
+  fired — the SPA hydrated from server-side session state.
+- The `E7E92E27-BDEB-4B4D-A331-9FF7950C3F10` cart used here was
+  ~30 min old at first hit and still live. Upper bound unknown; this
+  is the data point we have.
+
+### What this means for the skill
+
+- **Don't mint a fresh cart just because the last action was a while
+  ago.** A round-trip cart with no committed flights appears to live
+  for at least ~30 min of idle, possibly longer.
+- **URL-state vs SPA-state mismatch is normal.** A URL showing
+  `tripIndex=2` does not guarantee the return-slice picker is
+  rendered; the SPA decides which slice to show based on cart state
+  (what's committed vs what's still searchable). Read the rendered
+  DOM, not the URL.
+- **A reload is cheap and safe on a zombie cart.** If the page shows
+  no flight rows (`document.querySelectorAll('span')` finds no
+  `UA \d+ \(` spans), `Page.reload(ignoreCache=true)` is the first
+  thing to try — it re-seeds the SPA from the cart's server-side
+  state without a fresh search.
+- **Pure-Python return-slice search still fails on a zombie cart.**
+  Last session captured this: `{SearchTypeSelection: 3, Trips: []}`
+  with `cart_id` + `trip_index=2` returns 0 offers, because the
+  priming POST that fires on `trip_index=1 + return_date + no
+  cart_id` doesn't stick across the cart. The CDP workaround is
+  still required for minting a round-trip cart from scratch — but
+  not for resuming an existing one.
+
+### Rule of thumb
+
+> When an agent resumes work on a United cart, the first question is
+> "does this cart already hold the thing I want?" — not "is this
+> cart still alive?". Alive is the default; held state is what
+> matters. `get_cart` tells you what's held; the SPA at
+> `/fsr/choose-flights?cartId=<id>` tells you what's still searchable
+> on the same cart.
+
+### Cart states, observed so far
+
+| State | How to recognize | Valid actions |
+|---|---|---|
+| **empty round-trip cart** | GrandTotal = 0 or reflects a searched (not held) fare; DisplayTrips is empty | outbound search re-render on reload; pick outbound |
+| **outbound-held** | DisplayTrips has 1 entry with TripIndex=1; GrandTotal = outbound price | pick return; `/fsr/choose-flights?tripIndex=2&cartId=<id>` renders return picker |
+| **both-held** | DisplayTrips has 2 entries; GrandTotal = full round-trip | `/customizetravel/<id>?tqp=R` renders traveler form |
+| **traveler-registered** | DisplayTrips has 2 entries + Travelers array populated | `/checkout/<id>?tqp=R` renders payment |
+| **checkout-submitted** | POST to `/api/ShoppingCart/checkout` has succeeded | cart becomes a PNR; no further edits |
+
+Open question: what's the actual TTL on the empty and outbound-held
+states? All we know is that empty-round-trip survived 30 min idle.
+Worth parking a test: leave a cart idle for 2h, 6h, 24h and see
+when `LoadReservationAndCart` starts 404-ing.
+
+
+## Fare selection mechanics (session 4, 2026-04-24)
+
+Two behaviors the earlier session notes didn't capture, both
+observed while committing UA 1336 Basic Economy on the zombie
+cart:
+
+### Basic Economy has an acknowledgement checkbox
+
+Clicking the **Basic Economy** fare tile on a flight row opens an
+inline drill-down comparing Basic Economy vs the next cabin up
+(usually United Economy Standard). The drill-down renders two
+`<button aria-label="Select United Economy Basic (Most restrictive)">`
++ `<button aria-label="Select United Economy Standard">` side by
+side — but the Basic one is **disabled until a checkbox labeled
+"Basic Economy works for me" is ticked**.
+
+The checkbox is a React controlled `<input type=checkbox>`, no form,
+no `name`. It sits inside the same drill-down panel as the Select
+buttons. A plain CDP mouse click on the checkbox flips it.
+
+**Proven drive pattern:**
+```python
+# 1. Click the Basic Economy cabin card (x column aligns with the
+#    "Basic Economy" column header, not the "$373 United Economy" text).
+# 2. Tick the checkbox:
+evaljs("""
+(() => {
+  const lbl = Array.from(document.querySelectorAll('label, span')).find(
+    e => /Basic Economy works for me/.test(e.innerText||''));
+  let node = lbl, cb = null;
+  for (let i = 0; i < 8; i++) {
+    node = node.parentElement; if (!node) break;
+    cb = node.querySelector('input[type=checkbox]');
+    if (cb) break;
+  }
+  cb.scrollIntoView({block:'center'});
+  return JSON.stringify(cb.getBoundingClientRect());
+})()
+""")
+# Click via Input.dispatchMouseEvent at checkbox center.
+# 3. Click Select:
+evaljs("document.querySelector('button[aria-label=\"Select United Economy Basic (Most restrictive)\"]').click()")
+```
+
+`.click()` (plain DOM) works here — no form to `requestSubmit()`.
+The earlier note about React buttons needing `requestSubmit()`
+applies to form submit buttons, not plain imperative clicks.
+
+### New cart is minted on first fare selection
+
+**Observed**: the zombie cart id (`E7E92E27-...`) was active all
+the way through the outbound-picker reload and the fare-tile
+drill-down. On clicking **Select Basic Economy** for UA 1336, the
+SPA's RegisterFlights POST came back with a **different cart id**
+(`0EECAD7A-DB26-4D80-B1F5-220C5F9B2553`) and the URL advanced to
+`?tripIndex=2&idx=2&cartId=0EECAD7A...`.
+
+Working theory: United treats a cart as *scoped to a specific
+round-trip search session*. Once search results age out of some
+internal TTL (or are touched by a new bearer / new session),
+committing a fare creates a fresh cart with the selected flight
+RegisterFlights'd immediately. The zombie cart is orphaned; its
+LoadReservationAndCart still 200s but no further commits can
+flow to it.
+
+**What this means:**
+- The cart id changes on fare commit when you're resuming an old
+  cart. Always **re-read `location.href`** and update your
+  `cart_id` state *after* each major commit (RegisterFlights,
+  RegisterTravelers, checkout).
+- Don't rely on the cart id captured at search time surviving
+  across a resume-and-commit. Treat cart id as a
+  continuously-rolling value, not a stable booking handle.
+- The "stable handle" is the cart id **as of the last successful
+  commit**. That's what goes into `prepare_booking`'s signed blob.
+
+### Round-trip total pricing on the outbound page
+
+The outbound-slice cards show **round-trip totals from the cheapest
+matching return**, not outbound-only prices. From the banner: *"All
+fares shown are the total price roundtrip, per person."* This is
+why session 3's captured "$209.41 outbound" total on E7E92E27 looks
+so different from session 4's "$373 starting fare" on the same cart
+— $209.41 was the one-way-style outbound price because no return
+had been paired; $373 is the RT-total pairing UA 1336 outbound with
+the cheapest available return (UA 1807 23:59 at $373).
+
+On the return-slice page, each card also shows RT-totals — the
+*difference* between rows is the incremental cost of picking that
+return slice. Cheapest RT = outbound + cheapest return (same $373).
+Premium return slices price as outbound + return-slice delta.
+
+
+## Browser-state extraction (session 4, 2026-04-24)
+
+**Rule: read page data from browser state, not from HTML. Regex
+scraping breaks across languages/currencies and rots with every UI
+tweak.** United's SPA persists almost everything in three layers;
+here is the exhaustive map for the checkout page.
+
+### Layer 1 — Redux live store (primary source)
+
+United's Redux store is **not** exposed on `window` — it's
+attached to a ReactReduxContext provider's `memoizedProps.store`
+somewhere inside the React fiber tree. To access it from CDP,
+walk the fiber:
+
+```js
+function installStore() {
+  const roots = Array.from(document.querySelectorAll('div, main, section'));
+  for (const el of roots) {
+    const fk = Object.keys(el).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
+    if (!fk) continue;
+    const seen = new Set();
+    const stack = [el[fk]];
+    while (stack.length) {
+      const f = stack.pop();
+      if (!f || seen.has(f)) continue;
+      seen.add(f);
+      const mp = f.memoizedProps;
+      if (mp?.store?.getState) { window.__UA_STORE__ = mp.store; return true; }
+      if (mp?.value?.store?.getState) { window.__UA_STORE__ = mp.value.store; return true; }
+      for (const k of ['return','child','sibling','alternate']) if (f[k]) stack.push(f[k]);
+    }
+  }
+  return false;
+}
+```
+
+Once installed on `window.__UA_STORE__`, read like so:
+
+```js
+const s = window.__UA_STORE__.getState();
+// State top-level is either Immutable.Map (use s.get(key)) or plain object.
+const toJS = v => (v && typeof v.toJS === 'function') ? v.toJS() : v;
+const get = k => toJS(s.get ? s.get(k) : s[k]);
+```
+
+Top-level state bucket inventory (as of 2026-04-24 checkout page):
+
+| Bucket | Relevance | What lives here |
+|---|---|---|
+| `commonShoppingCart` | **cart**, fares, taxes, trips | `.commonShoppingCartResponse.cslCart.cartData.DisplayCart` — full GrandTotal, DisplayPrices (with SubItems = tax lines), DisplayTrips (with per-leg flight info), IsNonRefundable, ProductCode |
+| `profile` | **user profile lookups** | `.creditCards.byHash[hash]`, `.addresses.byHash[hash]`, `.phoneNumbers.byHash[hash]`, `.emailAddresses.byHash[hash]` — all keyed by an opaque `Key` string the SPA uses to cross-reference (e.g. card → address) |
+| `app` | userProfile data | `.userProfile.data.Travelers[0]` — the logged-in MileagePlus traveler: FirstName, LastName, DOB, Gender, MileagePlusId, CustomerId, etc. |
+| `seatMapBase` | this cart's committed traveler | `.trip.root.reservation.Travelers[0].Person` — same shape as userProfile BUT with `.Documents[]` (KTN lives in `Documents[*].KnownTravelerNumber`) |
+| `cartReducer` | legacy cart state | Mostly empty / superseded by `commonShoppingCart` |
+| `commonPaymentReducer` | payment operations | `.savedCardsDetails`, `.panNumberError`, `.contactlessPaymentEligibility`, etc. |
+| `creditCardModel` | **new-card entry form** | Empty when a saved card is preselected. DO NOT use this to detect the current selection. |
+| `registerTraveler` | traveler form state | `.registerTravelersResponse` |
+| `reviewTripTraveler` | upsell + related | UpsellFlight, SavedMPTravelers, etc. |
+| `forms` | all reducer-tracked forms | Some fields surface here; many ancillary forms (insurance, save-card) live in component-local state instead |
+
+### Layer 2 — Persisted redux (IndexedDB via localforage)
+
+Persisted across page loads. Transit-js-encoded Immutable state.
+
+- IDB database: **`localforage`**
+- Object store: **`keyvaluepairs`**
+- Keys: **`reduxPersist:global`**, **`reduxPersist:storage`**
+- Format: JSON string with transit-js tags (`~#iM` = Immutable.Map,
+  `~#iL` = Immutable.List, `~#iOM` = Immutable.OrderedMap)
+- Access:
+
+```js
+const db = await new Promise((ok, err) => {
+  const r = indexedDB.open('localforage');
+  r.onsuccess = () => ok(r.result);
+  r.onerror   = () => err(r.error);
+});
+const blob = await new Promise(ok => {
+  const tx = db.transaction('keyvaluepairs', 'readonly').objectStore('keyvaluepairs').get('reduxPersist:global');
+  tx.onsuccess = () => ok(tx.result);
+});
+// `blob` is a string; parse with a transit-js reader or walk the tags manually.
+```
+
+Persisted state only carries search-form preferences and some
+session hints; the current cart is **not** persisted there.
+
+### Layer 3 — DOM (UI-only state not in Redux)
+
+A handful of form fields live in React component local state
+(`useState`/`setState`) rather than Redux. These never round-trip
+to the store and must be read from the DOM. Each has a generic
+selector that doesn't depend on the traveler's personal data:
+
+| Field | DOM selector | Decoding |
+|---|---|---|
+| Selected saved card | `document.getElementById('savedCard').value` | Compound `<last4><typeCode>` — `"2005AX"` = AMEX ending 2005, `"9768MC"` = MasterCard ending 9768. Split `/^(\d{4})(\w+)$/`. The last4 joins back into `profile.creditCards.byHash`. |
+| Travel-guard insurance choice | `document.querySelector('input[name="WASCInsuranceOfferOption"]:checked').value` | Suffix `_Decline` = declined, `_Accept` = purchased |
+| Payment method tier | `document.querySelector('input[name="paymentMethod"]:checked').value` | `CC` = credit/debit, `TC` = travel credits, `PP` = PayPal, `AP` = Alipay+, `PZ` = Paze |
+| Save-card-for-inflight toggle | checkbox with `name="Save your credit card for airport and inflight purchases."` (the full label is the `name`) | plain `.checked` |
+| Short cart ref id | `document.body.innerText.match(/Cart ID:\s*(\d+)/)[1]` | The numeric user-visible ref. The long UUID is in URL/state. |
+
+### The card → address join (this matters — don't use "primary")
+
+**A saved card's billing address is NOT the user's primary
+address.** Each card carries an `AddressKey` string that joins to
+an entry in `profile.addresses.byHash`:
+
+```js
+const last4 = document.getElementById('savedCard').value.match(/^(\d{4})/)[1];
+const card  = Object.values(state.profile.creditCards.byHash)
+                   .find(c => c.AccountNumberLastFourDigits === last4);
+const addr  = Object.values(state.profile.addresses.byHash)
+                   .find(a => a.Key === card.AddressKey);
+// addr.AddressLine1, addr.City, addr.StateCode, addr.PostalCode
+```
+
+Observed case: a user has 4 saved addresses, one flagged
+`IsPrimary: true` that is NOT the billing address for the
+currently-selected card. The checkout page shows the card's
+AddressKey-linked address — the `IsPrimary` bit is unrelated to
+booking billing.
+
+### The traveler's KTN — pull from seatMapBase, not profile
+
+`app.userProfile.data.Travelers[0]` has `KnownTravelerNumber` on
+some profiles but it's sometimes only stamped into the reservation
+when the cart is built. The reliable path for a cart-bound KTN:
+
+```js
+state.seatMapBase.trip.root.reservation.Travelers[0].Person.Documents
+  .find(d => d.KnownTravelerNumber)?.KnownTravelerNumber
+```
+
+### Tax breakdown
+
+`DisplayPrices[0].SubItems[]` where `item.Value === "Tax"` gives
+the exact 8 (or N) line items the UI renders under "Taxes and
+fees". `.Description` is already localized. **Don't parse the
+rendered tax list from HTML** — the labels differ by locale.
+
+### General rule
+
+> **If it's shown on a United page, it's in `window.__UA_STORE__.getState()` or in the DOM's form elements. Walk the store first, fall back to DOM form values, never regex-scrape the rendered body.**
+
+Codify as much of this as possible in Python skill tools
+(`get_cart`, `get_contact_info`, future `get_checkout_state`) so
+agents don't have to rediscover these paths.
+
+
+## Checkout POST capture — post-mortem (session 4, 2026-04-24)
+
+We attempted to pause-and-abort the real `/api/ShoppingCart/checkout`
+POST via CDP `Fetch.enable` but **the capture armed too late and the
+booking went through**. PNR: OSKNPT. $467.81 charged on AMEX ****2005.
+
+### What the stub did
+
+```python
+send("Fetch.enable", {"patterns": [
+    {"urlPattern": "*/api/ShoppingCart/checkout*", "requestStage": "Request"},
+    {"urlPattern": "*/api/ShoppingCart/Purchase*", "requestStage": "Request"},
+    {"urlPattern": "*/api/Payment/Submit*",       "requestStage": "Request"},
+    {"urlPattern": "*checkout*",                  "requestStage": "Request"},   # ← loose
+]})
+# then click "Agree and purchase", drain events for 15s, abort first match.
+```
+
+### Why it missed
+
+1. **URL pattern was too loose.** `*checkout*` matched the Akamai
+   telemetry beacon `/public/<hash>/collect?...u=...checkout...` because
+   the beacon URL-encodes the referer, and the checkout page URL
+   contains the substring "checkout". So the first request Fetch
+   flagged was the telemetry beacon that fires *after* the confirmation
+   page has already loaded — i.e. after the booking POST already went
+   through.
+2. **Click-to-enable race.** `Fetch.enable` was sent, then
+   `Input.dispatchMouseEvent` for the click, without explicitly
+   awaiting the `Fetch.enable` response. The WebSocket may not have
+   committed the interception config before the SPA fired its axios
+   request.
+3. **No response-side visibility.** `Fetch.enable` with
+   `requestStage: "Request"` only catches outbound; if the real
+   checkout POST somehow sneaks past the pattern, there's no sanity
+   check that "hey, we just navigated to /confirmation/ without
+   intercepting anything, something went wrong — bail!"
+
+### Fix plan (next session)
+
+- Narrow patterns to **exact paths**: `https://www.united.com/api/ShoppingCart/checkout`
+  (no glob, no substring). Add `Purchase` and any sibling confirmed via
+  live capture; drop `*checkout*`.
+- Send `Fetch.enable` and wait for the result message ID **before**
+  running the click. The existing `send()` helper already does this;
+  the stub's fire-and-forget was a bug, not a limitation.
+- Add a watchdog: monitor `Page.frameNavigated` too; if the frame
+  navigates to `/confirmation/<cartId>` and we haven't paused a
+  `/api/ShoppingCart/checkout` request yet, **we missed it** — log
+  loudly so we know to redo the capture rather than silently thinking
+  abort succeeded.
+- Consider using `requestStage: "Response"` on top of Request, so even
+  if we miss the Request-stage pause, we'll see the Response and know
+  what the server returned.
+- Better: do the capture with `Network.getResponseBody` after the fact.
+  Enable `Network.responseReceived` listener; when we see the checkout
+  URL's response, immediately call `Network.getResponseBody(requestId)`.
+  This can't abort (it's observation-only), but it's race-free.
+
+### What we learned about the flow (useful independent of the bug)
+
+- The booking click fires axios `POST https://www.united.com/...` —
+  exact path still unknown but the endpoint is one of:
+  `/api/ShoppingCart/checkout`, `/api/ShoppingCart/Purchase`, or
+  `/api/Payment/Submit`. Likely the first.
+- Immediately after 200 from that POST, the SPA navigates to
+  `/en/us/book-flight/confirmation/<cartId>?tqp=R` — no intermediate
+  3DS challenge for saved cards, no modal, no confirmation.
+- The Akamai telemetry beacon fires from the confirmation page with a
+  17KB POST body to `/public/<hash>/collect` — interesting
+  reconnaissance target but unrelated to booking.
+- PNR is surfaced on the confirmation page. `list_trips` picks up the
+  new reservation within seconds.
+
+### Until the body is captured: confirm_booking stays read-only
+
+The skill's `confirm_booking` tool still refuses to contact the
+checkout endpoint — the exact JSON body is required to avoid sending
+malformed money-moving requests. All other gates are real (HMAC blob,
+confirm-amount string match, live re-read, card-on-file verification,
+consent flags). The day we capture the body, wiring the final http.post
+is a 10-line addition; everything else is already in place.
 

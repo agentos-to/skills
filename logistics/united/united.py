@@ -586,6 +586,99 @@ async def get_profile(**params) -> dict:
     return person
 
 
+@returns({
+    "given_name": "string",
+    "middle_name": "string",
+    "surname": "string",
+    "date_of_birth": "string",
+    "gender": "string",
+    "mileage_plus": "string",
+    "emails": "array",
+    "phones": "array",
+    "known_traveler_number": "string",
+    "redress_number": "string",
+    "primary_email": "string",
+    "primary_phone": "string",
+    "primary_phone_country_code": "string",
+})
+@connection("web")
+@timeout(20)
+async def get_contact_info(**params) -> dict:
+    """Fetch the logged-in user's saved contact info (phones, emails, KTN,
+    redress) and identity (name/DOB/gender) from their MileagePlus profile.
+
+    Returns a plain dict — no shape — intended for booking flows that need
+    to prefill traveler contact fields or to render a confirmation card.
+    The four underlying endpoints are:
+      - `/xapi/myunited/User/profile` — name, DOB, gender, MP#
+      - `/api/user/phoneNumbers`      — all saved phones, flagged IsPrimary
+      - `/api/user/emailAddresses`    — all saved emails, flagged IsPrimary
+      - `/api/user/travelerSupplementaryTravelInfo` — KTN (Type=K), Redress (Type=R)
+    """
+    prof_resp = await _authed_get("/xapi/myunited/User/profile")
+    prof = ((prof_resp.get("json") or {}).get("data") or {}).get("profile") or {}
+    t0 = (prof.get("Travelers") or [{}])[0]
+
+    dob_raw = t0.get("BirthDate") or ""
+    dob = dob_raw
+    if dob_raw:
+        from datetime import datetime
+        try:
+            dob = datetime.fromisoformat(dob_raw.replace("Z", "+00:00")).strftime("%m/%d/%Y")
+        except Exception:
+            dob = dob_raw[:10]
+
+    em_resp = await _authed_get("/api/user/emailAddresses")
+    em_list = ((em_resp.get("json") or {}).get("data") or {}).get("EmailAddresses") or []
+    ph_resp = await _authed_get("/api/user/phoneNumbers")
+    ph_list = ((ph_resp.get("json") or {}).get("data") or {}).get("PhoneNumbers") or []
+    sup_resp = await _authed_get("/api/user/travelerSupplementaryTravelInfo")
+    sup = ((sup_resp.get("json") or {}).get("data") or {}).get("SupplementaryTravelInfos") or []
+
+    def _pick_primary(xs, key):
+        return next((x for x in xs if x.get("IsPrimary")), xs[0] if xs else {}).get(key)
+
+    emails = [{
+        "email": e.get("EmailAddress"),
+        "type": e.get("EmailType") or e.get("TypeCode"),
+        "primary": bool(e.get("IsPrimary")),
+    } for e in em_list if e.get("EmailAddress")]
+    def _combine_phone(p: dict) -> str:
+        """United stores phones split into AreaNumber + PhoneNumber. Join them."""
+        area = (p.get("AreaNumber") or "").strip()
+        sub  = (p.get("PhoneNumber") or "").strip()
+        return (area + sub) if area else sub
+
+    phones = [{
+        "number": _combine_phone(p),
+        "area_number": p.get("AreaNumber"),
+        "subscriber_number": p.get("PhoneNumber"),
+        "extension": p.get("ExtensionNumber"),
+        "country_code": p.get("CountryPhoneNumber") or "1",
+        "country": p.get("CountryCode") or "US",
+        "type": p.get("ChannelTypeDescription") or p.get("ChannelTypeCode") or p.get("Description"),
+        "primary": bool(p.get("IsPrimary")),
+    } for p in ph_list if p.get("PhoneNumber")]
+    ktn = next((s.get("Number") for s in sup if (s.get("Type") or "").upper() == "K"), None)
+    redress = next((s.get("Number") for s in sup if (s.get("Type") or "").upper() == "R"), None)
+
+    return {
+        "given_name":   t0.get("FirstName"),
+        "middle_name":  t0.get("MiddleName"),
+        "surname":      t0.get("LastName"),
+        "date_of_birth": dob,
+        "gender":       t0.get("GenderCode") or t0.get("Gender"),
+        "mileage_plus": t0.get("MileagePlusId"),
+        "emails":       emails,
+        "phones":       phones,
+        "known_traveler_number": ktn,
+        "redress_number":        redress,
+        "primary_email":  _pick_primary(em_list, "EmailAddress"),
+        "primary_phone":  next((p["number"] for p in phones if p["primary"]), phones[0]["number"] if phones else None),
+        "primary_phone_country_code": _pick_primary(ph_list, "CountryPhoneNumber") or "1",
+    }
+
+
 @returns("membership")
 @connection("web")
 @timeout(30)
@@ -643,11 +736,179 @@ async def get_mileageplus(**params) -> dict:
     }
 
 
+def _parse_mytrips_datetime(s: str | None) -> str | None:
+    """Parse United's MyTrips datetime format (`M/D/YYYY h:mm:ss AM/PM`)
+    into ISO 8601. Returns None for empty / unparseable.
+
+    United's MyTrips endpoint uses a locale-dependent "4/28/2026 1:00:00 PM"
+    string instead of the ISO format search_flights uses. Normalize so
+    downstream consumers don't have to care.
+    """
+    if not s or not isinstance(s, str):
+        return None
+    from datetime import datetime
+    for fmt in ("%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(s.strip(), fmt).isoformat()
+        except Exception:
+            pass
+    return s  # return as-is so we never lose the raw value
+
+
+def _characteristic_value(chars: list[dict] | None, code: str) -> str | None:
+    """Pull a Value from a Characteristic[] list matching a Code.
+
+    United's reservation envelopes use a key/value pattern — the top-level
+    `Characteristic: [{Code, Value}]` carries PNR-scoped flags like
+    HAS_ETICKET, PNR_STATUS, PNRCOUNT. Travelers' `Characteristics`
+    (note: plural) carry per-person flags like FQTV (MileagePlus#).
+    """
+    for c in chars or []:
+        if (c.get("Code") or "").upper() == code.upper():
+            return c.get("Value") or c.get("Description")
+    return None
+
+
+def _seg_to_leg(fs: dict) -> dict | None:
+    """Convert a MyTrips FlightSegment → a flight-shaped leg node.
+
+    MyTrips FlightSegments wrap a nested `FlightSegment` dict with the
+    real per-leg data (dep/arr airports, times, flight number, booking
+    class). Durations and aircraft aren't included at this tier; the
+    caller can enrich via /api/flights/... or accept None.
+    """
+    seg = fs.get("FlightSegment") or {}
+    flight_num = seg.get("FlightNumber")
+    if not flight_num:
+        return None
+    marketing = (seg.get("OperatingAirlineCode") or "UA").strip()
+    # Airports: nested records with full city/state/country/lat-lon.
+    def _ap(a: dict | None) -> dict | None:
+        if not a: return None
+        name = a.get("Name") or a.get("ShortName")
+        country = (a.get("IATACountryCode") or {}).get("CountryCode")
+        state = (a.get("StateProvince") or {}).get("StateProvinceCode")
+        return _airport_node_from_ua(
+            iata=a.get("IATACode"),
+            name=name,
+            country_code=country,
+            state_code=state,
+        )
+    bc = (seg.get("BookingClasses") or [{}])[0].get("Code", "").strip()
+    # Full flight number format "UA 1234"
+    label = f"{marketing} {flight_num}".strip()
+    leg: dict = {
+        "shape": "flight",
+        "id": f"united-flight:{label}",
+        "flightNumber": label,
+        "departureTime": _parse_mytrips_datetime(seg.get("DepartureDateTime")),
+        "arrivalTime":   _parse_mytrips_datetime(seg.get("ArrivalDateTime")),
+        "departsFrom":   _ap(seg.get("DepartureAirport")),
+        "arrivesAt":     _ap(seg.get("ArrivalAirport")),
+        "airline":       _UNITED_ORG if marketing == "UA" else {
+            "shape": "airline", "iataCode": marketing, "name": marketing,
+        },
+        # Cabin comes from BookingClass letter — N = Basic/Economy on UA.
+        # Keeping the raw letter for downstream mapping; no faux label.
+        "_bookingClass": bc or None,
+    }
+    return leg
+
+
+def _itin_to_trips(itin: dict) -> list[dict]:
+    """Split a MyTrips itinerary into trip-shaped nodes.
+
+    United returns all flight segments flat in `FlightSegments[]`. Each
+    segment has a `TripNumber` that groups legs belonging to the same
+    direction (outbound=1, return=2, etc.). We bucket by TripNumber and
+    build one trip per bucket, with sorted legs[] + origin/destination
+    taken from first/last leg.
+    """
+    segs = itin.get("FlightSegments") or []
+    buckets: dict[int, list[dict]] = {}
+    for s in segs:
+        tn = int(s.get("TripNumber") or 1)
+        buckets.setdefault(tn, []).append(s)
+    trips: list[dict] = []
+    for tn in sorted(buckets):
+        bucket = sorted(buckets[tn], key=lambda s: int(s.get("SegmentNumber") or 0))
+        legs = [l for l in (_seg_to_leg(s) for s in bucket) if l]
+        if not legs:
+            continue
+        f0, fL = legs[0], legs[-1]
+        origin = f0.get("departsFrom") or {}
+        dest   = fL.get("arrivesAt") or {}
+        trips.append({
+            "shape": "trip",
+            "id": f"united-trip:{origin.get('iataCode','?')}-{dest.get('iataCode','?')}:{f0.get('departureTime','')[:10]}",
+            "name": f"{origin.get('iataCode','?')}→{dest.get('iataCode','?')}",
+            "tripType": "flight",
+            "status": "confirmed",
+            "departureTime": f0.get("departureTime"),
+            "arrivalTime":   fL.get("arrivalTime"),
+            "origin":        origin or None,
+            "destination":   dest or None,
+            "carrier":       _UNITED_ORG,
+            "legs":          legs,
+            "_tripIndex":    tn,
+        })
+    return trips
+
+
+def _itin_to_passengers(itin: dict) -> list[dict]:
+    """Map MyTrips Travelers[] → person-shaped nodes.
+
+    Each traveler has a `Person` with GivenName/Surname and a sibling
+    `Characteristics[]` with `FQTV` entries (one per frequent-flyer
+    program attached to the booking).
+    """
+    travs = itin.get("Travelers") or []
+    out: list[dict] = []
+    for t in travs:
+        person = t.get("Person") or {}
+        given = (person.get("GivenName") or "").strip()
+        surname = (person.get("Surname") or "").strip()
+        middle = (person.get("MiddleName") or "").strip()
+        if not (given or surname):
+            continue
+        full = " ".join(p for p in [given, middle, surname] if p)
+        # MileagePlus (or other FF#) from traveler's own Characteristics
+        mp = _characteristic_value(t.get("Characteristics"), "FQTV")
+        node: dict = {
+            "shape": "person",
+            "id": f"united-traveler:{(person.get('Key') or surname or given or 'unknown').strip()}",
+            "name": full,
+            "givenName": given or None,
+            "additionalName": middle or None,
+            "familyName": surname or None,
+            "legalName": full or None,
+        }
+        if mp:
+            node["memberships"] = [{
+                "shape": "membership",
+                "id": mp,
+                "name": f"MileagePlus {mp}",
+                "status": "active",
+                "at": _UNITED_ORG,
+            }]
+        out.append(node)
+    return out
+
+
 @returns("reservation[]")
 @connection("web")
 @timeout(45)
 async def list_trips(upcoming_only: bool = True, **params) -> list[dict]:
     """List upcoming United reservations for the logged-in MileagePlus user.
+
+    Each reservation is emitted as a graph-complete `reservation` node:
+    trips[] with origin/destination/times, legs[] with flight numbers +
+    airports, passengers[] from the itinerary, and flags derived from the
+    MyTrips response (HAS_ETICKET, status, 24-hour void window, etc.).
+
+    Fields we don't yet capture (aircraft type, fare breakdown, totals) are
+    left as None rather than fabricated — those enrich cleanly once the
+    per-trip detail endpoint is wired up.
 
     Args:
         upcoming_only: If True (default), fetch only future trips. If False,
@@ -655,7 +916,7 @@ async def list_trips(upcoming_only: bool = True, **params) -> list[dict]:
           endpoint doesn't return distant past trips — past-trip history lives
           elsewhere and isn't yet implemented).
     """
-    from datetime import date, timedelta
+    from datetime import date, datetime as _dt, timedelta
 
     today = date.today()
     end = today + timedelta(days=365)
@@ -669,20 +930,60 @@ async def list_trips(upcoming_only: bool = True, **params) -> list[dict]:
 
     reservations: list[dict] = []
     for itin in data:
-        # Shape mapping is a placeholder until we capture a non-empty response.
-        # When we book a flight and capture the actual structure, refine this.
-        pnr = itin.get("RecordLocator") or itin.get("ConfirmationNumber") or ""
-        reservations.append({
+        # PNR — United ships it as ConfirmationID on MyTrips responses
+        # (RecordLocator / ConfirmationNumber were guesses that never matched).
+        pnr = (itin.get("ConfirmationID") or itin.get("RecordLocator") or itin.get("ConfirmationNumber") or "").strip()
+        if not pnr:
+            continue
+
+        trips = _itin_to_trips(itin)
+        passengers = _itin_to_passengers(itin)
+
+        # Booking time: MyTrips gives CreateDate in the M/D/YYYY format.
+        booked_at = _parse_mytrips_datetime(itin.get("CreateDate"))
+        # Trip window — first leg dep → last leg arr.
+        start_time = trips[0]["departureTime"] if trips else None
+        end_time   = trips[-1]["arrivalTime"] if trips else None
+        # 24-hour void window (US DOT rule): if we have a bookingTime, add 24h.
+        void_ends = None
+        try:
+            if booked_at:
+                void_ends = (_dt.fromisoformat(booked_at) + timedelta(hours=24)).isoformat()
+        except Exception:
+            pass
+
+        # Characteristic flags
+        has_etkt = (_characteristic_value(itin.get("Characteristic"), "HAS_ETICKET") or "").lower() == "true"
+        pnr_status = _characteristic_value(itin.get("Characteristic"), "PNR_STATUS") or ""
+        # Map Current/History/... → our reservation.status (confirmed/completed)
+        status = "confirmed" if pnr_status.lower() in ("current", "") else pnr_status.lower()
+
+        reservation = {
+            "shape": "reservation",
             "id": f"united-pnr:{pnr}",
             "reservationType": "flight",
             "reservationId": pnr,
-            "status": (itin.get("Status") or "confirmed").lower(),
+            "status": status,
             "bookingType": "instant",
-            "name": f"United reservation {pnr}",
-            "at": {"shape": "airline", "name": "United Airlines",
-                   "url": "https://www.united.com", "iataCode": "UA"},
+            "bookingTime": booked_at,
+            "startTime": start_time,
+            "endTime":   end_time,
+            "voidWindowEndsAt": void_ends,
+            "availableActions": ["cancel", "change", "check_in"] if has_etkt else ["cancel", "change"],
+            "checkinUrl": f"https://www.united.com/en/us/checkin/{pnr}",
+            "partySize": len(passengers) or 1,
+            # totals not in MyTrips — deferred to a future get_trip enrichment
+            "totalAmount": None,
+            "currency": None,
+            "name": (itin.get("NickName") or f"United reservation {pnr}").strip(),
+            "at": _UNITED_ORG,
+            "trips": trips,
+            "passengers": passengers,
             "_raw": itin,
-        })
+            "_hasEticket": has_etkt,
+            "_pnrStatus": pnr_status or None,
+        }
+        reservations.append(reservation)
     return reservations
 
 
@@ -1432,7 +1733,10 @@ async def register_traveler(
             ph_resp = await _authed_get("/api/user/phoneNumbers")
             ph_list = ((ph_resp.get("json") or {}).get("data") or {}).get("PhoneNumbers") or []
             primary = next((p for p in ph_list if p.get("IsPrimary")), (ph_list[0] if ph_list else {}))
-            phone_number = primary.get("PhoneNumber")
+            # United stores phones split into AreaNumber + PhoneNumber (subscriber only).
+            area = (primary.get("AreaNumber") or "").strip()
+            sub  = (primary.get("PhoneNumber") or "").strip()
+            phone_number = (area + sub) if area else sub
             country_calling_code = primary.get("CountryPhoneNumber") or country_calling_code
 
         if not known_traveler_number:
@@ -2050,52 +2354,105 @@ async def render_seatmap(
     max_columns = max(max_columns, 6)  # min 6 for 3-3 layout
 
     # Inner-width budget: max_columns seat cells * 3 chars + (max_columns-1)
-    # single-space gaps. For aisle we replace the gap with a 3-char row-number
-    # slot. Worst case: "ABC DEF" → 6 seats + 5 gaps + 2 aisle-wide → that's
-    # 6*3 + 5 + 2 = 25 chars inner. We just pick 25 and pad from there.
-    INNER = 31  # gives breathing room for "║", " ", seats, row-number, seats, " ║"
+    # Interior width (display cells). Worst case: ABC DEF layout
+    # = 6 seats × 2 cells + 4 SEAT_SEPs × 1 + 1 aisle × 6 cells (premium)
+    # = 12 + 4 + 6 = 22. Add margin for breathing room.
+    INNER = 28
+
+    # All seats render as emoji (2 terminal cells wide each). Premium
+    # cabins (First / Business) get a wider aisle gap — matches UA's UI
+    # where First has more space between A|B and E|F — rather than a
+    # wider cell, since an emoji is already large.
+    #   F = First, J = Business/First (UA domestic), C = Business
+    #   W = Premium Economy, Y = Economy
+    _PREMIUM_CABIN_TYPES = {"F", "J", "C"}
+
+    # Cell is always one emoji wide. The byte-count of a cell varies
+    # (emoji may be 1 or 4+ codepoints), but every cell renders as 2
+    # terminal cells. We track cells, not bytes, for layout.
+    _CELL_STR_WIDTH = 2  # display cells per seat
+
+    def _aisle_width_cells(cabin: dict | None) -> int:
+        """Width (in terminal cells) of the gap between seat groups."""
+        if cabin and (cabin.get("cabinType") or "").upper() in _PREMIUM_CABIN_TYPES:
+            return 6  # wider — First has ~2 empty cells between AB | EF
+        return 4
+
+    # Keycap emojis for paid tiers — one glyph per tier, rendered as 2
+    # terminal cells (colorful in every modern emoji font). We rank the
+    # flight's paid tiers densely 1..N so unused tier ids don't appear
+    # on the map; the legend maps each keycap back to its real price.
+    _KEYCAP = [
+        "1️⃣","2️⃣","3️⃣","4️⃣","5️⃣",
+        "6️⃣","7️⃣","8️⃣","9️⃣","🔟",
+    ]
+
+    # Build paid-tier ranking: real-tier-id → (rank_index, price).
+    _paid_tiers_sorted = sorted(
+        [(tid, (t.get("price") or 0)) for tid, t in tiers_map.items()
+         if (t.get("price") or 0) > 0],
+        key=lambda x: x[1],
+    )
+    _tier_rank: dict[int, int] = {tid: i for i, (tid, _) in enumerate(_paid_tiers_sorted)}
+
+    # Glyphs — every one renders as 2 terminal cells wide (emoji or
+    # double-cell character). Picked for clarity + color + consistent
+    # presentation across modern terminals (iTerm, Terminal.app, Ghostty,
+    # Kitty, WezTerm, Alacritty).
+    # Seat-state palette — temperature scale so "availability" reads at a
+    # glance. Green X (❎) was confusing (green+X = mixed signal), so we
+    # use neutral/warm tones instead.
+    _GLYPH_BLANK    = "  "       # no seat at this grid column
+    _GLYPH_FREE     = "⬜"       # U+2B1C WHITE LARGE SQUARE — open
+    _GLYPH_OCCUPIED = "❌"       # U+274C CROSS MARK — taken (someone else has it)
+    _GLYPH_BLOCKED  = "🟥"       # U+1F7E5 RED SQUARE — structurally blocked (API-reported)
+    _GLYPH_MONUMENT = "▓▓"       # fallback if a monument spills into a seat cell
 
     def _seat_cell(s: dict | None) -> str:
+        """Render one seat — always 2 terminal cells wide."""
         if s is None:
-            return "   "
+            return _GLYPH_BLANK
         if s.get("itemType") == "MONUMENT":
-            return "▓▓▓"
+            return _GLYPH_MONUMENT
         if s.get("isBlocked") or s.get("isPermanentBlocked"):
-            return "███"
+            return _GLYPH_BLOCKED
         if s.get("isAvailable"):
             tier = int(s.get("tier") or 0)
             price = (tiers_map.get(tier) or {}).get("price") or 0
             if price > 0:
-                # Show the price tier digit inside the seat so the user can
-                # relate a seat to the price list. Fall back to $ if unknown.
-                return f" ${tier}" if tier < 10 else " $ "
-            return " ○ "
-        return " ✕ "
+                rank = _tier_rank.get(tier, 0)
+                return _KEYCAP[rank] if rank < len(_KEYCAP) else "💰"
+            return _GLYPH_FREE
+        return _GLYPH_OCCUPIED
 
-    def _row_line(row: dict, layout: str) -> tuple[str, str]:
-        """Return (interior, right_label) for a row. interior is the
-        seats-plus-row-number body (without the fuselage walls). right_label
-        is stuff to draw OUTSIDE the fuselage (WING / EXIT marker)."""
+    # Between-seat spacing inside a group: one space cell for air.
+    _SEAT_SEP = " "
+
+    def _row_line(row: dict, cabin: dict) -> tuple[str, str, str]:
+        """Return (left_label, interior, right_label) for a row.
+
+        Cells are 2-display-wide emoji, separated by 1 space inside a
+        group, aisle_width_cells spaces between groups. Row number
+        prints OUTSIDE the left wall; structural labels (wing / exit /
+        bulkhead) print OUTSIDE the right wall.
+        """
+        layout = cabin.get("layout") or ""
+        aisle = " " * _aisle_width_cells(cabin)
         groups = layout.split(" ")
         sl = {
             s.get("letter"): s
             for s in (row.get("seats") or [])
             if s.get("itemType") != "MONUMENT"
         }
-        # Build each group of seats
         group_strs: list[str] = []
         for g in groups:
-            parts = []
-            for i, letter in enumerate(list(g)):
-                parts.append(_seat_cell(sl.get(letter)))
-            group_strs.append(" ".join(parts))
+            parts = [_seat_cell(sl.get(letter)) for letter in list(g)]
+            group_strs.append(_SEAT_SEP.join(parts))
+        interior = aisle.join(group_strs)
 
-        # Join groups with the row-number slot in the middle aisle
         rn = str(row.get("number") or "")
-        aisle_slot = f" {rn:^3} "
-        interior = aisle_slot.join(group_strs)
+        left_label = f"{rn:>3}  "
 
-        # Right-side label (outside the wall)
         labels = []
         if row.get("wing"):
             labels.append("wing")
@@ -2104,106 +2461,299 @@ async def render_seatmap(
         if any(s.get("isBulkhead") for s in row.get("seats") or []):
             labels.append("bulkhead")
         right_label = " ←  " + ", ".join(labels) if labels else ""
-        return interior, right_label
+        return left_label, interior, right_label
+
+    import unicodedata as _ud
+
+    def _display_width(text: str) -> int:
+        """Width of `text` in terminal cells.
+
+        Rules:
+          - Keycap sequences `X U+FE0F U+20E3` render as 2 cells (emoji
+            presentation) — detect and count once.
+          - Other cells: Wide/Fullwidth EAW → 2, combining/VS/ZWJ → 0,
+            everything else → 1.
+        """
+        w = 0
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            # Keycap sequence detection: base + VS16 + U+20E3.
+            if (
+                i + 2 < n
+                and text[i + 1] == "️"
+                and text[i + 2] == "⃣"
+            ):
+                w += 2
+                i += 3
+                continue
+            # Zero-width combining / variation-selector / ZWJ.
+            if _ud.category(ch) in ("Mn", "Me", "Cf"):
+                i += 1
+                continue
+            # Emoji presentation after a base char (emoji VS16) can also
+            # promote a text-presentation char to 2 cells (☕ + FE0F → ☕️).
+            if i + 1 < n and text[i + 1] == "️":
+                w += 2
+                i += 2
+                continue
+            eaw = _ud.east_asian_width(ch)
+            if eaw in ("W", "F"):
+                w += 2
+            else:
+                w += 1
+            i += 1
+        return w
 
     def _pad(inner: str) -> str:
-        """Center `inner` within INNER chars."""
-        return inner.center(INNER)
+        """Center `inner` in a line of INNER terminal cells."""
+        pad = INNER - _display_width(inner)
+        if pad <= 0:
+            return inner
+        left = pad // 2
+        right = pad - left
+        return (" " * left) + inner + (" " * right)
+
+    # Glyph map — emoji throughout, each 2 terminal cells wide so they
+    # line up with seat cells. ☕ carries U+FE0F (variation selector-16)
+    # so terminals that default to text presentation still render it as
+    # a colorful emoji. The other choices are single-presentation emoji
+    # (no selector needed).
+    _MON_GLYPH = {
+        "LAV": "🚻",         # U+1F6BB RESTROOM
+        "GALLEY": "☕️",  # U+2615 HOT BEVERAGE + VS16 → color
+        "CLOSET": "🧺",
+        "STOWAGE": "🧺",
+        "SPACER": "  ",       # 2-cell blank, keeps alignment
+        "AISLE": "  ",
+    }
+
+    def _monument_cells_for_row(monuments: list, cabin: dict) -> str | None:
+        """Return a row-body string with monuments placed at the
+        OUTERMOST column of each seat group, matching UA's UI (the
+        lavatory icon spans rows A-B on the left; the galley spans
+        rows E-F on the right).
+
+        We don't use the API's `horizontalGridNumber` directly — it
+        anchors monuments to the first seat of a group (col 1 for AB,
+        col 4 for EF), which gives an inside-aligned look. UA instead
+        renders these glyphs at the outer edges of each group.
+
+        Returns None if the layout is missing — caller falls back to
+        a centered label.
+        """
+        layout = cabin.get("layout") or ""
+        if not layout:
+            return None
+        groups = layout.split(" ")
+        if not groups:
+            return None
+        aisle = " " * _aisle_width_cells(cabin)
+
+        # Build grid-column → glyph from the API's horizontal grid.
+        # Keep the mapping around only so we know WHICH groups have a
+        # monument (left-group vs right-group). We don't use the grid
+        # col for layout — we paint at the outer edge of each group.
+        by_col: dict[int, str] = {}
+        for m in monuments:
+            hgn = m.get("horizontalGridNumber")
+            if hgn is None:
+                continue
+            itype = m.get("itemType") or ""
+            glyph = _MON_GLYPH.get(itype)
+            if not glyph or glyph.strip() == "":
+                continue
+            by_col[int(hgn)] = glyph
+
+        if not by_col:
+            return None
+
+        # Walk grid columns tracking which group we're in. For each
+        # group, collect "does it have any monument in any of its
+        # columns?" and which glyph (first one wins — rare to have
+        # multiple monuments per group per row).
+        group_glyphs: list[str | None] = []
+        col = 0
+        for gi, g in enumerate(groups):
+            if gi > 0:
+                col += 1  # aisle column
+            glyph_for_group: str | None = None
+            for _letter in list(g):
+                col += 1
+                if col in by_col:
+                    glyph_for_group = glyph_for_group or by_col[col]
+            group_glyphs.append(glyph_for_group)
+
+        # Render each group: the glyph sits at the outer edge (leftmost
+        # cell for a left group, rightmost cell for a right group);
+        # remaining cells are blank. Middle group (3-group layouts on
+        # wide-bodies, e.g. 3-4-3) centers the glyph for now.
+        n_groups = len(groups)
+        rendered_groups: list[str] = []
+        for gi, g in enumerate(groups):
+            glyph = group_glyphs[gi]
+            width = len(g)
+            cells = ["  "] * width
+            if glyph:
+                if gi == 0:
+                    cells[0] = glyph                # leftmost — outer edge
+                elif gi == n_groups - 1:
+                    cells[-1] = glyph               # rightmost — outer edge
+                else:
+                    cells[width // 2] = glyph       # middle group — center
+            rendered_groups.append(_SEAT_SEP.join(cells))
+        return aisle.join(rendered_groups)
 
     # Build the drawing row-by-row.
     # Row body width (what sits inside the walls) = INNER. A seat row prints
-    # as:  "│ " + padded_interior(INNER) + " │"  → total width INNER + 4.
-    # With "│▐" / "▌│" on exit rows the outer width stays the same.
+    # as:  "NN  " + "│ " + padded_interior(INNER) + " │" + right_label
+    # — row number OUTSIDE the left wall, structural labels OUTSIDE the right.
     TUBE_OUTER = INNER + 4    # "│ " + INNER + " │"
+    LEFT_MARGIN = "     "     # 5 chars — matches "NN   " for non-row lines
     lines: list[str] = []
-    # Header above the plane
+    # Header above the plane — flight + route + **date + time** + aircraft.
+    # Parse the ISO departureTime into a friendly "Tue Apr 28, 2026 · 13:00"
+    # so there's no ambiguity about which flight we're looking at.
+    dep_iso = sm.get("departureTime") or ""
+    dep_friendly = dep_iso.replace("T", " ")
+    try:
+        from datetime import datetime as _dt
+        _parsed = _dt.fromisoformat(dep_iso.replace("Z", "+00:00")) if dep_iso else None
+        if _parsed is not None:
+            dep_friendly = _parsed.strftime("%a %b %-d, %Y · %H:%M")
+    except Exception:
+        pass
     lines.append(
         f"✈  {sm.get('flightNumber')}  "
         f"{sm.get('origin')} → {sm.get('destination')}  "
-        f"{(sm.get('departureTime') or '').replace('T',' ')}  "
+        f"{dep_friendly}  "
         f"aircraft {sm.get('aircraftCode')}"
     )
     lines.append("")
 
-    # Top cap: a flat box. No nose/tail cone.
-    lines.append("┌" + "─" * (TUBE_OUTER - 2) + "┐")
-    # Cabin-brand banner row, centered inside the tube
-    first_brand = class_sections[0]["brand"] if class_sections else ""
-    lines.append("│ " + _pad(first_brand) + " │")
-    # Column-letter header for the first cabin
-    first_layout = class_sections[0]["layout"] if class_sections else ""
-    if first_layout:
-        groups = first_layout.split(" ")
+    # "A  B  ...  E  F" header — each letter centered under its 2-cell
+    # seat slot, with SEAT_SEP between letters within a group and the
+    # cabin's aisle-width between groups.
+    def _letter_header(cabin: dict) -> str:
+        layout = cabin.get("layout") or ""
+        if not layout:
+            return ""
+        aisle = " " * _aisle_width_cells(cabin)
+        groups = layout.split(" ")
         group_strs = []
         for g in groups:
-            parts = [f" {letter} " for letter in list(g)]
-            group_strs.append(" ".join(parts))
-        header_inner = "     ".join(group_strs)   # wider aisle slot for the header
-        lines.append("│ " + _pad(header_inner) + " │")
-    lines.append("│ " + _pad("") + " │")
+            # Each letter is 1 cell; center it in a 2-cell slot.
+            parts = [f"{letter} " for letter in list(g)]
+            group_strs.append(_SEAT_SEP.join(parts))
+        return aisle.join(group_strs)
+
+    # Top cap: a flat box. No nose/tail cone.
+    lines.append(LEFT_MARGIN + "┌" + "─" * (TUBE_OUTER - 2) + "┐")
+
+    # UA's visual order per cabin is:
+    #   monuments (lavatories / galleys at actual grid positions)
+    #   — cabin brand banner ("United First") —
+    #   column letters (A B  …  E F)
+    #   seat rows
+    # We defer the brand+letters until just before the first seat row
+    # of each cabin, so the top of each cabin matches the UI.
+    written_header_for: set[int] = set()
+
+    def _ensure_cabin_header(cabin_idx: int) -> None:
+        if cabin_idx in written_header_for:
+            return
+        written_header_for.add(cabin_idx)
+        cabin = (sm.get("cabins") or [])[cabin_idx] if cabin_idx < len(sm.get("cabins") or []) else {}
+        brand = class_sections[cabin_idx]["brand"] if cabin_idx < len(class_sections) else ""
+        if brand:
+            lines.append(LEFT_MARGIN + "│ " + _pad(brand) + " │")
+            # Blank line separating the brand label from the column
+            # letters below — matches UA's UI where the class title
+            # has vertical breathing room above the seat grid.
+            lines.append(LEFT_MARGIN + "│ " + _pad("") + " │")
+        lh = _letter_header(cabin)
+        if lh:
+            # Letters sit IMMEDIATELY above their seat columns — no
+            # blank line between letters and the first seat row.
+            lines.append(LEFT_MARGIN + "│ " + _pad(lh) + " │")
 
     # Walk the merged entries and draw row-by-row
     current_cabin = 0
     for kind, vgn, payload, cabin_idx in all_entries:
         # Cabin transition? Draw a cabin-divider band.
         if cabin_idx != current_cabin:
-            lines.append("│ " + _pad("— — — — — — — — — — — —") + " │")
-            new_brand = class_sections[cabin_idx]["brand"]
-            lines.append("│ " + _pad(new_brand) + " │")
-            new_layout = class_sections[cabin_idx]["layout"]
-            if new_layout:
-                groups = new_layout.split(" ")
-                group_strs = []
-                for g in groups:
-                    parts = [f" {letter} " for letter in list(g)]
-                    group_strs.append(" ".join(parts))
-                header_inner = "     ".join(group_strs)
-                lines.append("│ " + _pad(header_inner) + " │")
-            lines.append("│ " + _pad("") + " │")
+            lines.append(LEFT_MARGIN + "│ " + _pad("— — — — — — — — — — — —") + " │")
             current_cabin = cabin_idx
 
         if kind == "mon":
             monuments = payload.get("monuments") or []
-            types = {m.get("itemType") for m in monuments}
             has_exit = any(m.get("isDoorExit") for m in monuments)
             if has_exit:
                 # Draw a row with red exit markers OUTSIDE the fuselage wall
-                lines.append("│▐" + _pad("═ ═ ═  DOOR/EXIT  ═ ═ ═") + "▌│")
-            elif "LAV" in types:
-                lines.append("│ " + _pad("⊟  LAVATORY  ⊟") + " │")
+                lines.append(LEFT_MARGIN + "│▐" + _pad("═ ═ ═  DOOR/EXIT  ═ ═ ═") + "▌│")
+                continue
+
+            # Positional monument row — honor horizontalGridNumber so the
+            # lavatory shows upper-left, a galley upper-right, etc.
+            # Layout is `AB EF` (or `ABC DEF`) — letters + a single space
+            # gap that represents the aisle. Monument cells are one column
+            # wide each (same as a seat cell) with a 3-char aisle gap.
+            cabin = (sm.get("cabins") or [])[cabin_idx]
+            cells = _monument_cells_for_row(monuments, cabin)
+            if cells is not None:
+                lines.append(LEFT_MARGIN + "│ " + _pad(cells) + " │")
+                continue
+            # Fallback for rows we can't position: centered label.
+            types = {m.get("itemType") for m in monuments}
+            if "LAV" in types:
+                lines.append(LEFT_MARGIN + "│ " + _pad("🚻  LAVATORY  🚻") + " │")
             elif "GALLEY" in types:
-                lines.append("│ " + _pad("▒  GALLEY  ▒") + " │")
+                lines.append(LEFT_MARGIN + "│ " + _pad("☕  GALLEY  ☕") + " │")
             continue
 
-        # Seat row
+        # Seat row — emit cabin header (brand + letters) just before
+        # this cabin's first seat row, so the ordering matches UA's UI.
+        _ensure_cabin_header(cabin_idx)
         row = payload
         cabin = (sm.get("cabins") or [])[cabin_idx]
-        interior, right_label = _row_line(row, cabin.get("layout") or "")
+        left_label, interior, right_label = _row_line(row, cabin)
         padded = _pad(interior)
         # For exit-row rows, draw small red "▐" / "▌" on the wall edge
         is_exit_row = any(s.get("isExit") for s in row.get("seats") or [])
         left_wall = "│▐" if is_exit_row else "│ "
         right_wall = "▌│" if is_exit_row else " │"
-        lines.append(left_wall + padded + right_wall + right_label)
+        lines.append(left_label + left_wall + padded + right_wall + right_label)
 
     # Bottom cap: flat box.
-    lines.append("└" + "─" * (TUBE_OUTER - 2) + "┘")
+    lines.append(LEFT_MARGIN + "└" + "─" * (TUBE_OUTER - 2) + "┘")
 
-    # Legend
-    legend_bits = [
-        "○ free", "$N paid (tier N)", "✕ occupied",
-        "█ blocked", "▓ monument",
+    # Legend — one glyph per line, skimmable.
+    legend_lines = [
+        "Legend:",
+        "  ⬜  free (no charge to select)",
+        "  ❌  occupied (someone else has it)",
+        "  🟥  permanently blocked (held for elites / day-of-travel / staff)",
+        "  🚻  lavatory",
+        "  ☕️ galley",
     ]
-    legend = "Legend:  " + "   ·   ".join(legend_bits)
-    if sm.get("tiers"):
-        legend += "\n\nPricing tiers:\n"
-        for tid, t in sorted(tiers_map.items()):
-            price = t.get("price") or 0
-            if price > 0:
-                legend += f"  tier {tid}: ${price:.2f}\n"
-    if sm.get("basicEconomyLocked"):
-        legend += "\n⚠ Basic Economy fare: seat selection is not purchasable on this ticket.\n"
 
+    # Price tiers: show each keycap emoji alongside its price, ranked
+    # cheapest→most expensive. Ties what 1️⃣ / 2️⃣ / … on the map cost.
+    if _paid_tiers_sorted:
+        legend_lines.append("")
+        legend_lines.append("Paid seats:")
+        for rank, (_tid, price) in enumerate(_paid_tiers_sorted):
+            glyph = _KEYCAP[rank] if rank < len(_KEYCAP) else "💰"
+            legend_lines.append(f"  {glyph}   ${price:.2f}")
+
+    if sm.get("basicEconomyLocked"):
+        legend_lines.append("")
+        legend_lines.append(
+            "⚠ Basic Economy fare: seat selection is not purchasable on this ticket."
+        )
+
+    legend = "\n".join(legend_lines)
     return {"ascii": "\n".join(lines), "legend": legend}
 
 
@@ -2301,6 +2851,47 @@ async def _fetch_saved_cards_for_user() -> list[dict]:
         return ((resp.get("json") or {}).get("data") or {}).get("CreditCards") or []
     except Exception:
         return []
+
+
+async def _fetch_saved_addresses_for_user() -> list[dict]:
+    """Fetch the logged-in user's saved addresses from /api/user/addresses.
+
+    Each address carries a `Key` string that cards reference via `AddressKey`
+    — that's how the checkout page resolves "which billing address goes with
+    the selected card". `IsPrimary` is unrelated to booking billing; it
+    tracks a user-level preference that may not match the selected card.
+    """
+    try:
+        resp = await _authed_get("/api/user/addresses")
+        if resp.get("status") != 200:
+            return []
+        return ((resp.get("json") or {}).get("data") or {}).get("Addresses") or []
+    except Exception:
+        return []
+
+
+def _billing_address_for_card(card: dict, addresses: list[dict]) -> dict | None:
+    """Resolve the billing address a card points at via its AddressKey.
+
+    Returns a shape-friendly dict: line1, line2, city, state, postalCode,
+    country. Returns None when the card has no AddressKey or no matching
+    address is on file.
+    """
+    akey = (card or {}).get("AddressKey")
+    if not akey:
+        return None
+    for a in addresses:
+        if a.get("Key") == akey:
+            return {
+                "shape": "postal_address",
+                "line1":      a.get("AddressLine1"),
+                "line2":      a.get("AddressLine2"),
+                "city":       a.get("City"),
+                "state":      a.get("StateCode") or a.get("State"),
+                "postalCode": a.get("PostalCode"),
+                "country":    a.get("CountryCode") or a.get("CountryName"),
+            }
+    return None
 
 
 def _payment_method_from_card(card: dict) -> dict:
@@ -2421,6 +3012,179 @@ def _tax_breakdown_line(tl: dict) -> str:
     return f"  {desc:<50} ${amt:>8.2f}"
 
 
+def _render_booking_review(
+    *,
+    cart: dict,
+    dc_raw: dict,
+    traveler: dict | None,
+    payment_method: dict | None,
+    billing_address: dict | None,
+    tax_lines: list[dict],
+    base_amount: float,
+    total_amount: float,
+    currency: str,
+    save_card_toggled: bool | None,
+    insurance_declined: bool | None,
+    free_cancel_24h: bool = True,
+    width: int = 72,
+) -> str:
+    """Render the full booking-review card as a framed ASCII block.
+
+    Matches the UI of the checkout page's right-rail summary. Callers
+    typically render this into an AskUserQuestion preview or print it
+    before calling `confirm_booking`. All inputs are pre-resolved —
+    this function does not hit the network.
+    """
+    import datetime as _dt
+    W = width
+    def L(s: str) -> str: return "│ " + s.ljust(W-4) + " │"
+    def S(title: str) -> str:
+        t = f" {title} "; return "├" + t + ("─"*(W-3-len(t))) + "┤"
+    def spaced(left: str, right: str) -> str:
+        pad = max(1, W - 4 - len(left) - len(right))
+        return L(left + " "*pad + right)
+
+    # Top frame
+    out: list[str] = []
+    cart_ref = cart.get("_cartRefId") or (cart.get("_cartId") or "")[:8]
+    out.append("┌" + "─"*(W-2) + "┐")
+    hdr = "  UNITED AIRLINES · BOOKING REVIEW"
+    if cart_ref: hdr += f" · Cart #{cart_ref}"
+    out.append(L(hdr))
+    trips = cart.get("trips") or []
+    pax_count = int(((dc_raw.get("DisplayPrices") or [{}])[0]).get("Count") or 1)
+    is_rt = len(trips) == 2
+    cabin_label = "Basic Economy"  # TODO: infer from ProductCode / fare family
+    subline = f"  {pax_count} traveler{'s' if pax_count != 1 else ''} · {cabin_label} · "
+    subline += "round-trip" if is_rt else ("one-way" if len(trips) == 1 else f"{len(trips)} segments")
+    if dc_raw.get("IsNonRefundable"): subline += " · Non-refundable"
+    out.append(L(subline))
+
+    # Traveler section — optional
+    if traveler:
+        out.append(S("TRAVELER"))
+        name_line = " ".join(p for p in [
+            traveler.get("GivenName") or traveler.get("given_name"),
+            traveler.get("MiddleName") or traveler.get("middle_name"),
+            traveler.get("Surname") or traveler.get("surname"),
+        ] if p)
+        if name_line:
+            out.append(L(f"  {name_line}"))
+        meta = []
+        dob = traveler.get("BirthDate") or traveler.get("date_of_birth")
+        if dob:
+            try:
+                d = _dt.datetime.fromisoformat(str(dob).replace("Z","+00:00"))
+                meta.append("DOB " + d.strftime("%m/%d/%Y"))
+            except Exception:
+                meta.append("DOB " + str(dob)[:10])
+        gender = traveler.get("GenderCode") or traveler.get("gender")
+        if gender: meta.append(f"Gender {gender}")
+        mp = traveler.get("MileagePlusId") or traveler.get("mileage_plus")
+        if mp: meta.append(f"MP# {mp}")
+        if meta: out.append(L("  " + " · ".join(meta)))
+        ktn = traveler.get("known_traveler_number") or traveler.get("KTN")
+        if not ktn:
+            for d in traveler.get("Documents") or []:
+                if d.get("KnownTravelerNumber"): ktn = d["KnownTravelerNumber"]; break
+        if ktn: out.append(L(f"  KTN (TSA PreCheck): {ktn}"))
+        phone = traveler.get("primary_phone") or traveler.get("phone")
+        cc = traveler.get("primary_phone_country_code") or "1"
+        if phone:
+            p = str(phone)
+            if len(p) >= 10:
+                out.append(L(f"  Phone: +{cc} ({p[:3]}) {p[3:6]}-{p[6:]}"))
+            else:
+                out.append(L(f"  Phone: +{cc} {p}"))
+        email = traveler.get("primary_email") or traveler.get("email")
+        if email: out.append(L(f"  Email: {email}"))
+
+    # Itinerary — use the already-enriched cart trips
+    if trips:
+        out.append(S("ITINERARY"))
+        for i, trip in enumerate(trips):
+            legs = trip.get("legs") or []
+            if not legs: continue
+            f0, fL = legs[0], legs[-1]
+            origin = (f0.get("departsFrom") or {})
+            dest   = (fL.get("arrivesAt") or {})
+            dep_ts = f0.get("departureTime")
+            arr_ts = fL.get("arrivalTime")
+            def _p(ts):
+                if not ts: return None
+                try: return _dt.datetime.fromisoformat(str(ts))
+                except Exception:
+                    try: return _dt.datetime.strptime(str(ts)[:16], "%Y-%m-%dT%H:%M")
+                    except Exception: return None
+            d1, d2 = _p(dep_ts), _p(arr_ts)
+            when = (d1.strftime("%a %b %-d · %-I:%M %p") if d1 else "") + \
+                   (" → " + d2.strftime("%-I:%M %p") if d2 else "")
+            # Flight number may already be prefixed (e.g. "UA 1336"); don't
+            # double it. Normalize to "<carrier> <num>" with a single space.
+            def _flight_label(l: dict) -> str:
+                fn = str(l.get("flightNumber","?") or "?").strip()
+                carrier = ((l.get("airline") or {}).get("iataCode") or "UA").strip()
+                if fn.upper().startswith(carrier.upper()):
+                    return fn  # already "UA 1336"
+                return f"{carrier} {fn}"
+            flight_nums = ", ".join(_flight_label(l) for l in legs)
+            aircraft = (legs[0].get("aircraft") or {}).get("name") or ""
+            stops = "Nonstop" if len(legs) == 1 else f"{len(legs)-1} stop"
+            o_str = f"{origin.get('city') or origin.get('iataCode')} ({origin.get('iataCode','?')})"
+            d_str = f"{dest.get('city') or dest.get('iataCode')} ({dest.get('iataCode','?')})"
+            out.append(L(f"  {o_str} → {d_str}"))
+            out.append(L(f"    {when}  ·  {stops}"))
+            out.append(L(f"    {flight_nums}{'   ·   '+aircraft if aircraft else ''}"))
+            if i < len(trips) - 1: out.append(L(""))
+
+    # Price
+    out.append(S("PRICE"))
+    dp0 = (dc_raw.get("DisplayPrices") or [{}])[0]
+    pax_desc = (dp0.get("Description") or "adult").lower()
+    taxes = sum((tl.get("amount") or 0) for tl in tax_lines)
+    out.append(spaced(f"  Fare ({pax_count} {pax_desc})", f"${(base_amount or 0):.2f}"))
+    out.append(spaced(f"  Taxes and fees", f"${taxes:.2f}"))
+    out.append(L("  " + "─"*(W-8)))
+    out.append(spaced(f"  TOTAL DUE", f"${total_amount:.2f} {currency}"))
+
+    # Payment
+    if payment_method or billing_address:
+        out.append(S("PAYMENT"))
+        if payment_method:
+            name = payment_method.get("displayName") or "(card)"
+            exp_m, exp_y = payment_method.get("expMonth"), payment_method.get("expYear")
+            exp_str = f"  (exp {exp_m}/{exp_y})" if exp_m and exp_y else ""
+            out.append(L(f"  Card:     {name}{exp_str}"))
+        if billing_address:
+            line = (billing_address.get("line1") or "").strip()
+            if billing_address.get("line2"): line += f", {billing_address['line2']}"
+            out.append(L(f"  Billing:  {line}"))
+            city = billing_address.get("city") or ""
+            state = billing_address.get("state") or ""
+            postal = billing_address.get("postalCode") or ""
+            addr2 = f"{city}, {state} {postal}".strip(" ,")
+            if addr2: out.append(L(f"            {addr2}"))
+
+    # Consents
+    out.append(S("CONSENTS"))
+    out.append(L(f"  {'[x]' if save_card_toggled     else '[ ]'}  Save card for airport & inflight purchases"))
+    out.append(L(f"  {'[x]' if insurance_declined    else '[ ]'}  Declined Travel Guard insurance"))
+    out.append(L(f"  {'[x]' if free_cancel_24h       else '[ ]'}  Cancel for free within 24 hours of booking"))
+    out.append("└" + "─"*(W-2) + "┘")
+
+    # Tax detail (below the card so users can see without filling the frame)
+    if tax_lines:
+        out.append("")
+        out.append(f"  Tax breakdown ({len(tax_lines)} line items):")
+        for tl in tax_lines:
+            desc = tl.get("description", "?")
+            amt = f"${(tl.get('amount') or 0):.2f}"
+            dots = max(2, W - 6 - len(desc) - len(amt))
+            out.append(f"    {desc}{' '+'·'*(dots-2)+' '}{amt}")
+
+    return "\n".join(out)
+
+
 @returns("booking_offer")
 @connection("web")
 @timeout(30)
@@ -2428,14 +3192,17 @@ async def prepare_booking(
     *,
     cart_id: str,
     signature_ttl_seconds: int = 300,
+    save_card_for_inflight: bool | None = None,
+    insurance_declined: bool | None = None,
     **params,
 ) -> dict:
     """Produce a signed booking_offer node from the current cart state.
 
     This is the safe, read-only half of the booking gate. It fetches
     the live cart via LoadReservationAndCart, the user's saved cards
-    via /api/user/creditCards, and composes a rich `booking_offer`
-    node:
+    via /api/user/creditCards, their saved addresses via
+    /api/user/addresses (to resolve the selected card's billing via
+    AddressKey), and composes a rich `booking_offer` node:
 
       - trips[] — enriched with airport city/state/country and aircraft
         manufacturer/model
@@ -2445,11 +3212,16 @@ async def prepare_booking(
       - paymentMethod — the currently selected saved card (IsSelected=true
         from /api/user/creditCards), with last4, brand, expiry, and
         opaque providerTokens
+      - billingAddress — the address a card points at (resolved via
+        card.AddressKey → /api/user/addresses). This is NOT always the
+        user's IsPrimary address; cards carry their own billing.
       - totalAmount, baseAmount, taxAmount, currency
       - referenceNumber — the short human-readable cart ID United shows
         on screen (641457887)
       - cartId — the long UUID
-      - HMAC-signed blob and expiresAt
+      - HMAC-signed blob (v3) and expiresAt
+      - review — framed ASCII card, ready to print or feed into an
+        AskUserQuestion preview
 
     The signed `blob` (also available as `_signature` on the returned
     node) is required by confirm_booking to actually charge the card.
@@ -2459,6 +3231,12 @@ async def prepare_booking(
         cart_id: UUID of the cart to book.
         signature_ttl_seconds: how long the signature is valid (default
             300s / 5 min). Short TTL prevents stale-blob replay.
+        save_card_for_inflight: if True, user has consented to saving the
+            selected card for airport/inflight tap-to-pay on this trip.
+            Reflected in the consent row of the rendered review AND
+            stored in the signed blob so confirm_booking can verify.
+        insurance_declined: if True, user has explicitly declined Travel
+            Guard insurance on the checkout page. Blob-verified.
     """
     import time, base64, hashlib, json as _j
 
@@ -2489,13 +3267,41 @@ async def prepare_booking(
     payment_method = _payment_method_from_card(selected_card) if selected_card else None
     all_payment_methods = [_payment_method_from_card(c) for c in saved_cards]
 
-    # Billing address — for now we surface the label string from the
-    # card record. The full structured address lives in /api/user/addresses
-    # which we don't fetch here to keep this read lean; deferred.
-    billing_address = None  # TODO: fetch /api/user/addresses and pick the one matching selected_card.AddressKey
+    # Billing address — each card points at an address via AddressKey.
+    # Not the user's `IsPrimary` address; this is the card's own billing.
+    saved_addresses = await _fetch_saved_addresses_for_user()
+    billing_address = _billing_address_for_card(selected_card, saved_addresses) if selected_card else None
 
-    # Travelers
+    # Travelers — prefer registered-traveler detail (name/DOB/gender/MP#/KTN
+    # from the cart's committed state) over DisplayTravelers (which only
+    # carries pax-type + DOB). `register_traveler` writes to Travelers[]
+    # inside the reservation envelope.
     travelers = dc_raw.get("DisplayTravelers") or []
+    committed_traveler = None
+    try:
+        # The cart's _raw has a Reservation nested inside with committed traveler detail
+        res = dc_raw.get("Reservation") or {}
+        res_travs = res.get("Travelers") or []
+        if res_travs:
+            p0 = (res_travs[0] or {}).get("Person") or {}
+            committed_traveler = {
+                "GivenName":     p0.get("GivenName"),
+                "MiddleName":    p0.get("MiddleName"),
+                "Surname":       p0.get("Surname"),
+                "BirthDate":     p0.get("BirthDate"),
+                "GenderCode":    p0.get("GenderCode") or p0.get("Sex"),
+                "MileagePlusId": p0.get("MileagePlusId") or ((p0.get("FrequentFlyerPrograms") or [{}])[0] or {}).get("Number"),
+                "Documents":     p0.get("Documents") or [],
+            }
+    except Exception:
+        committed_traveler = None
+    # Fall back to the user's profile if nothing's committed yet.
+    if not committed_traveler:
+        try:
+            contact = await get_contact_info()
+            committed_traveler = contact
+        except Exception:
+            committed_traveler = None
 
     # Timing
     now = int(time.time())
@@ -2523,9 +3329,11 @@ async def prepare_booking(
     itin_canonical = _j.dumps(itin, sort_keys=True, separators=(",", ":")).encode("utf-8")
     itinerary_hash = "sha256:" + hashlib.sha256(itin_canonical).hexdigest()
 
-    # Signed payload — everything bound by the signature
+    # Signed payload — everything bound by the signature. Consent flags
+    # and booking-time decisions are carried too so `confirm_booking` can
+    # reject replays with mismatched consents.
     signed_payload = {
-        "version": 2,
+        "version": 3,
         "cart_id": cart_id,
         "reference_number": cart.get("_cartRefId"),
         "total_amount": total,
@@ -2533,9 +3341,15 @@ async def prepare_booking(
         "itinerary_hash": itinerary_hash,
         "payment_method_last4": (payment_method or {}).get("last4"),
         "payment_method_identifier": (payment_method or {}).get("identifier"),
+        "payment_method_address_key": (payment_method or {}).get("providerTokens", {}).get("addressKey"),
         "search_type": dc_raw.get("SearchType"),
         "prepared_at": now,
         "expires_at": expires_at,
+        # Session-4 additions: we record agent-stated consents so confirm
+        # can verify them. These default to None — caller-set to True/False
+        # once the ASCII review has been shown to the user.
+        "save_card_for_inflight":   save_card_for_inflight,
+        "insurance_declined":        insurance_declined,
     }
     signature = _sign_blob(signed_payload)
     blob = {**signed_payload, "_signature": signature}
@@ -2543,41 +3357,26 @@ async def prepare_booking(
 
     amount_str = f"{currency} {total:.2f}"
 
-    # Human-readable itinerary summary
-    itin_lines: list[str] = []
-    for t in cart.get("trips") or []:
-        for l in t.get("legs") or []:
-            ac = l.get("aircraft") or {}
-            ac_model = (ac.get("model") or "").strip()
-            manu = (ac.get("manufacturer") or {}).get("name")
-            ac_str = f"{manu} {ac_model}".strip() if manu else ac_model
-            itin_lines.append(
-                f"{l.get('flightNumber','?').strip()}  "
-                f"{(l.get('departsFrom') or {}).get('city') or (l.get('departsFrom') or {}).get('iataCode','?')} "
-                f"→ {(l.get('arrivesAt') or {}).get('city') or (l.get('arrivesAt') or {}).get('iataCode','?')}  "
-                f"{(l.get('departureTime') or '')[:16].replace('T',' ')}  "
-                f"({ac_str})"
-            )
-
-    review_text = (
-        f"\nBOOKING REVIEW — cart #{cart.get('_cartRefId') or cart_id[:8]}\n"
-        + "=" * 60 + "\n"
-        + "Itinerary:\n"
-        + "\n".join("  " + l for l in itin_lines)
-        + "\n\n"
-        + f"Base fare:      ${base_amount:>8.2f} {currency}\n"
-        + "Taxes & fees:\n"
-        + "\n".join(_tax_breakdown_line(tl) for tl in tax_lines)
-        + f"\n  {'TOTAL':<50} ${total:>8.2f}\n\n"
+    # Render the structured ASCII review. We pass in everything pre-resolved
+    # so the renderer does no I/O.
+    review_text = _render_booking_review(
+        cart=cart,
+        dc_raw=dc_raw,
+        traveler=committed_traveler,
+        payment_method=payment_method,
+        billing_address=billing_address,
+        tax_lines=tax_lines,
+        base_amount=base_amount or 0,
+        total_amount=total,
+        currency=currency,
+        save_card_toggled=save_card_for_inflight,
+        insurance_declined=insurance_declined,
     )
-    if payment_method:
-        review_text += (
-            f"Charge to:      {payment_method['displayName']}"
-            + (f" ({payment_method['customDescription']})" if payment_method.get('customDescription') else "")
-            + f"  exp {payment_method.get('expirationDate','?')}\n"
-        )
-    review_text += f"\nExpires in {int(signature_ttl_seconds/60)} min. To proceed, call:\n"
-    review_text += f'  confirm_booking(blob=<above>, confirm_amount="{amount_str}", payment_method_last4="{(payment_method or {}).get("last4","????")}", dry_run=False)\n'
+    review_text += (
+        f"\n\n  Expires in {int(signature_ttl_seconds/60)} min. To book, call:\n"
+        f'  confirm_booking(blob=<above>, confirm_amount="{amount_str}", '
+        f'payment_method_last4="{(payment_method or {}).get("last4","????")}", dry_run=False)\n'
+    )
 
     # Build the booking_offer node
     offer = {
@@ -2654,7 +3453,11 @@ async def confirm_booking(
        figure they saw.
     4. `payment_method_last4` matches a card currently on file in the
        cart's payment methods. Nothing else is accepted.
-    5. `dry_run` must be explicitly set to False. Default is True.
+    5. Blob v3+ consent flags (`save_card_for_inflight`, `insurance_declined`)
+       must be explicit True/False values. None is treated as "prepare_booking
+       was called without the review being shown to the user" and rejected —
+       we don't default consents silently when money is on the line.
+    6. `dry_run` must be explicitly set to False. Default is True.
        (Tools passing through model output often forget False defaults;
        this forces an intentional override.)
 
@@ -2737,7 +3540,22 @@ async def confirm_booking(
             f"United website — this skill does not store new cards."
         )
 
-    # 5. dry_run gate
+    # 5. Consents — session-4 blob (v3+) carries save_card_for_inflight and
+    #    insurance_declined. Confirm that the agent has recorded them
+    #    explicitly (True/False). Leaving them as None means prepare_booking
+    #    was called without showing the user a review card — reject.
+    if decoded.get("version", 1) >= 3:
+        for consent_key in ("save_card_for_inflight", "insurance_declined"):
+            val = decoded.get(consent_key)
+            if val is None:
+                raise RuntimeError(
+                    f"confirm_booking: blob is missing consent '{consent_key}'. "
+                    f"prepare_booking must be re-run with that flag explicitly "
+                    f"set to True or False (after showing the review card to the user). "
+                    f"We do not default consents silently."
+                )
+
+    # 6. dry_run gate
     if dry_run is not False:
         card_desc = (
             matched_card.get("AccountNumberMasked")
