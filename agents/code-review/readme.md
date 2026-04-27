@@ -8,9 +8,6 @@ description: Evaluate code changes against project principles, refactoring specs
   and architectural direction
 color: '#DC2626'
 website: https://agentos.to
-tools:
-  evaluate_commit:
-    async: true
 ---
 
 # Code Review
