@@ -700,7 +700,7 @@ def _entry_from_direntry(entry):
     }
 
     if not is_dir:
-        result["mime_type"] = _mime_for_path(entry.name)
+        result["mimeType"] = _mime_for_path(entry.name)
         ext = Path(entry.name).suffix.lower()
         if ext:
             result["format"] = ext.lstrip(".").upper()
@@ -1058,10 +1058,10 @@ async def get_file_info(*, path, **_kwargs):
     }
 
     if is_dir:
-        result["contains_count"] = dir_item_count
+        result["containsCount"] = dir_item_count
         result["location"] = os.path.dirname(resolved)
     else:
-        result["mime_type"] = _mime_for_path(resolved)
+        result["mimeType"] = _mime_for_path(resolved)
         ext = Path(resolved).suffix.lower()
         if ext:
             result["format"] = ext.lstrip(".").upper()
