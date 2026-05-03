@@ -426,7 +426,7 @@ def _connection_mode(con: object | None) -> str:
 @test(params={"limit": 3})
 @returns("meeting[]")
 @connection(["api", "cache"])
-async def op_list_meetings(limit: int = 20, page: int = 0, connection: dict | None = None, **_kwargs) -> list:
+async def list_meetings(limit: int = 20, page: int = 0, connection: dict | None = None, **_kwargs) -> list:
     """Entry point for python: executor. `connection` is injected by AgentOS (api vs cache)."""
     mode = _connection_mode(connection)
     if mode == "cache":
@@ -441,7 +441,7 @@ async def op_list_meetings(limit: int = 20, page: int = 0, connection: dict | No
 @provides(web_read, urls=["app.granola.ai/docs/*"])
 @connection("api")
 @timeout(60)
-async def op_get_meeting(id: str = None, url: str = None, connection: dict | None = None, **_kwargs) -> dict:
+async def get_meeting(id: str = None, url: str = None, connection: dict | None = None, **_kwargs) -> dict:
     """API only — local cache does not include full transcripts.
 
     Accepts either a direct `id` (UUID) or a Granola `url`
@@ -460,7 +460,7 @@ async def op_get_meeting(id: str = None, url: str = None, connection: dict | Non
 
 @returns("conversation[]")
 @connection(["api", "cache"])
-async def op_list_conversations(document_id: str, connection: dict | None = None, **_kwargs) -> list:
+async def list_conversations(document_id: str, connection: dict | None = None, **_kwargs) -> list:
     """List Q&A/AI chat threads linked to a meeting transcript
 
         Args:
@@ -477,7 +477,7 @@ async def op_list_conversations(document_id: str, connection: dict | None = None
 
 @returns("conversation")
 @connection(["api", "cache"])
-async def op_get_conversation(thread_id: str, connection: dict | None = None, **_kwargs) -> dict:
+async def get_conversation(thread_id: str, connection: dict | None = None, **_kwargs) -> dict:
     """Get a Q&A conversation with full message history
 
         Args:

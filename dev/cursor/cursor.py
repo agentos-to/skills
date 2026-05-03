@@ -606,7 +606,7 @@ async def uninstall_mcp(client="cursor", **params):
 
 @returns("conversation[]")
 @timeout(60)
-async def op_list_sessions(**params):
+async def list_sessions(**params):
     """List sessions from JSONL transcripts (fast, sub-second)."""
     conversations = _get_jsonl_conversations()
     return sorted(
@@ -618,7 +618,7 @@ async def op_list_sessions(**params):
 
 @returns("conversation[]")
 @timeout(300)
-async def op_backfill_session(workspace=None, **params):
+async def backfill_session(workspace=None, **params):
     """List sessions including full SQLite history."""
     conversations = _get_jsonl_conversations()
     backfill = await _get_backfill_conversations(
@@ -634,7 +634,7 @@ async def op_backfill_session(workspace=None, **params):
 
 
 @returns("conversation")
-async def op_get_session(id, **params):
+async def get_session(id, **params):
     """Get a session by UUID (checks JSONL then SQLite)."""
     conv = await _get_session_by_id(id)
     if not conv:
@@ -644,7 +644,7 @@ async def op_get_session(id, **params):
 
 @returns("file[]")
 @timeout(120)
-async def op_pull_document(**params):
+async def pull_document(**params):
     """Pull sub-agent research blobs from Cursor's global SQLite store."""
     if not os.path.isfile(GLOBAL_STATE_DB):
         return []

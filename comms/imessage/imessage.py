@@ -89,7 +89,7 @@ def _map_message(row):
 
 @test(params={"limit": 3})
 @returns("conversation[]")
-async def op_list_conversations(*, limit=200, **params):
+async def list_conversations(*, limit=200, **params):
     """List all iMessage/SMS conversations."""
     rows = await sql.query("""
         SELECT
@@ -124,7 +124,7 @@ async def op_list_conversations(*, limit=200, **params):
 
 
 @returns("conversation")
-async def op_get_conversation(*, id, **params):
+async def get_conversation(*, id, **params):
     """Get a specific conversation with metadata."""
     rows = await sql.query("""
         SELECT
@@ -158,7 +158,7 @@ async def op_get_conversation(*, id, **params):
 
 
 @returns("message[]")
-async def op_list_messages(*, conversation_id, limit=200, **params):
+async def list_messages(*, conversation_id, limit=200, **params):
     """List messages in a conversation."""
     return await sql.query("""
         SELECT
@@ -186,7 +186,7 @@ async def op_list_messages(*, conversation_id, limit=200, **params):
 
 
 @returns("message")
-async def op_get_message(*, id, **params):
+async def get_message(*, id, **params):
     """Get a specific message by ID."""
     rows = await sql.query("""
         SELECT
@@ -209,7 +209,7 @@ async def op_get_message(*, id, **params):
 
 
 @returns("message[]")
-async def op_search_messages(*, query, limit=200, **params):
+async def search_messages(*, query, limit=200, **params):
     """Search messages by text content."""
     return await sql.query("""
         SELECT
@@ -244,7 +244,7 @@ async def op_search_messages(*, query, limit=200, **params):
 
 @test.skip(reason="destructive — sends real iMessage")
 @returns({"ok": "boolean"})
-async def op_send_message(*, to, text, service="iMessage", **params):
+async def send_message(*, to, text, service="iMessage", **params):
     """Send an iMessage or SMS to a phone number or email."""
     result = await shell.run("imsg", args=["send", "--to", to, "--text", text, "--service", service, "--json"], timeout=15)
     if result["exit_code"] != 0:

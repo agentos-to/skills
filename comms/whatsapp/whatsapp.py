@@ -148,7 +148,7 @@ def _map_message(row):
 
 
 @returns("person[]")
-async def op_list_persons(*, conversation_id=None, limit=200, **params):
+async def list_persons(*, conversation_id=None, limit=200, **params):
     """Get WhatsApp contacts, or group participants when conversation_id is provided."""
     rows = await sql.query("""
         SELECT DISTINCT
@@ -209,7 +209,7 @@ async def op_list_persons(*, conversation_id=None, limit=200, **params):
 
 @test(params={"limit": 3})
 @returns("conversation[]")
-async def op_list_conversations(*, archived=False, limit=200, **params):
+async def list_conversations(*, archived=False, limit=200, **params):
     """List WhatsApp conversations. Defaults to active (non-archived) chats only."""
     rows = await sql.query("""
         SELECT
@@ -237,7 +237,7 @@ async def op_list_conversations(*, archived=False, limit=200, **params):
 
 
 @returns("conversation")
-async def op_get_conversation(*, id, **params):
+async def get_conversation(*, id, **params):
     """Get a specific conversation with metadata."""
     rows = await sql.query("""
         SELECT
@@ -265,7 +265,7 @@ async def op_get_conversation(*, id, **params):
 
 
 @returns("message[]")
-async def op_list_messages(*, conversation_id=None, is_unread=None, limit=200, **params):
+async def list_messages(*, conversation_id=None, is_unread=None, limit=200, **params):
     """List messages in a conversation. Use is_unread=True without conversation_id to get all unread."""
     rows = await sql.query("""
         SELECT
@@ -310,7 +310,7 @@ async def op_list_messages(*, conversation_id=None, is_unread=None, limit=200, *
 
 
 @returns("message")
-async def op_get_message(*, id, **params):
+async def get_message(*, id, **params):
     """Get a specific message by ID."""
     rows = await sql.query("""
         SELECT
@@ -339,7 +339,7 @@ async def op_get_message(*, id, **params):
 
 
 @returns("message[]")
-async def op_search_messages(*, query, limit=200, **params):
+async def search_messages(*, query, limit=200, **params):
     """Search messages by text content."""
     rows = await sql.query("""
         SELECT

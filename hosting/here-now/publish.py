@@ -96,7 +96,7 @@ async def claim_website(*, slug: str, claim_token: str, **params) -> dict:
 
 
 @returns({"sent": "boolean", "message": "string"})
-async def op_signup(*, email: str, **params) -> dict:
+async def signup(*, email: str, **params) -> dict:
     """Send a magic link to the user's email. They click it, land on the here.now dashboard, and copy their API key. Then add it to AgentOS credentials for permanent publishes (no 24h expiry, 60/hour rate limit). After getting the key: POST /sys/accounts { "skill": "here-now", "account": "default", "api_key": "..." }
 
         Args:
@@ -259,7 +259,7 @@ def _do_publish(
 
 @returns("website")
 @timeout(60)
-async def op_create_website(
+async def create_website(
     content,
     filename="index.html",
     content_type="text/html; charset=utf-8",
@@ -283,7 +283,7 @@ async def op_create_website(
 
 @returns("website")
 @timeout(60)
-async def op_update_website(
+async def update_website(
     slug,
     content,
     filename="index.html",

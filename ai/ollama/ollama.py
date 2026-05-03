@@ -127,7 +127,7 @@ async def _ensure_api_running(connection: dict | None, cli_connection: dict | No
 @test
 @returns({"running": "{'type': 'boolean'}", "version": "{'type': 'string'}", "started": "{'type': 'boolean'}", "message": "{'type': 'string'}"})
 @connection("cli")
-async def op_status(connection: dict | None = None, **kwargs) -> dict:
+async def status(connection: dict | None = None, **kwargs) -> dict:
     """Check if Ollama is running; start it if not. Returns running state + version."""
     binary = _binary(connection)
     base = DEFAULT_BASE_URL
@@ -186,7 +186,7 @@ def _normalize_tool_calls(raw: list) -> list:
 @returns({"content": "{'type': 'string', 'description': 'Text response (null if tool calls only)'}", "thinking": "{'type': 'string', 'description': 'Reasoning trace (only for thinking models)'}", "tool_calls": "{'type': 'array', 'description': 'Tool calls the model wants to make'}", "stop_reason": "{'type': 'string', 'enum': ['end_turn', 'tool_use', 'max_tokens']}", "usage": "{'type': 'object', 'description': 'Token counts: input_tokens, output_tokens'}"})
 @connection(["api", "cli"])
 @timeout(300)
-async def op_chat(
+async def chat(
     model: str,
     messages: list,
     tools: list = None,
@@ -305,7 +305,7 @@ async def _chat_via_cli(
 @returns({"response": "{'type': 'string'}", "usage": "{'type': 'object', 'description': 'input_tokens, output_tokens'}"})
 @connection("api")
 @timeout(300)
-async def op_generate(
+async def generate(
     model: str,
     prompt: str,
     system: str = None,
@@ -398,7 +398,7 @@ def _parse_list_text(text: str) -> list:
 @returns({"status": "{'type': 'string'}", "model": "{'type': 'string'}", "message": "{'type': 'string'}"})
 @connection(["cli", "api"])
 @timeout(600)
-async def op_pull_model(model: str, connection: dict | None = None, **kwargs) -> dict:
+async def pull_model(model: str, connection: dict | None = None, **kwargs) -> dict:
     """Download a model from the Ollama registry. Uses the CLI by default for reliable progress on large downloads; can also use the REST API. Timeout is 10 minutes — large models (e.g. 19GB GLM) take several minutes.
 
         Args:
@@ -440,7 +440,7 @@ async def _pull_via_api(model: str, connection: dict | None) -> dict:
 @test.skip(reason='destructive or unsupported — migrated from yaml')
 @returns({"status": "{'type': 'string'}", "model": "{'type': 'string'}", "message": "{'type': 'string'}"})
 @connection(["api", "cli"])
-async def op_delete_model(model: str, connection: dict | None = None, **kwargs) -> dict:
+async def delete_model(model: str, connection: dict | None = None, **kwargs) -> dict:
     """Delete a downloaded model, freeing disk space.
 
         Args:
@@ -474,7 +474,7 @@ async def _delete_via_cli(model: str, connection: dict | None) -> dict:
 @returns({"name": "{'type': 'string'}", "format": "{'type': 'string'}", "family": "{'type': 'string'}", "parameterSize": "{'type': 'string'}", "quantizationLevel": "{'type': 'string'}", "contextLength": "{'type': 'integer'}", "template": "{'type': 'string'}", "systemPrompt": "{'type': 'string'}"})
 @connection("api")
 @timeout(15)
-async def op_show_model(model: str, connection: dict | None = None, **kwargs) -> dict:
+async def show_model(model: str, connection: dict | None = None, **kwargs) -> dict:
     """Show detailed model info: architecture, parameter count, quantization, context window length, template, and system prompt.
 
         Args:
@@ -590,32 +590,32 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     try:
         if cmd == "status":
-            result = op_status()
+            result = status()
         elif cmd == "list":
             result = _op_list_models()
         elif cmd == "pull":
             if len(sys.argv) < 3:
                 raise ValueError("Usage: ollama.py pull <model>")
-            result = op_pull_model(sys.argv[2])
+            result = pull_model(sys.argv[2])
         elif cmd == "delete":
             if len(sys.argv) < 3:
                 raise ValueError("Usage: ollama.py delete <model>")
-            result = op_delete_model(sys.argv[2])
+            result = delete_model(sys.argv[2])
         elif cmd == "show":
             if len(sys.argv) < 3:
                 raise ValueError("Usage: ollama.py show <model>")
-            result = op_show_model(sys.argv[2])
+            result = show_model(sys.argv[2])
         elif cmd == "chat":
             if len(sys.argv) < 4:
                 raise ValueError("Usage: ollama.py chat <model> <message>")
-            result = op_chat(
+            result = chat(
                 model=sys.argv[2],
                 messages=[{"role": "user", "content": sys.argv[3]}],
             )
         elif cmd == "generate":
             if len(sys.argv) < 4:
                 raise ValueError("Usage: ollama.py generate <model> <prompt>")
-            result = op_generate(model=sys.argv[2], prompt=sys.argv[3])
+            result = generate(model=sys.argv[2], prompt=sys.argv[3])
         else:
             raise ValueError(f"Unknown command: {cmd}")
 

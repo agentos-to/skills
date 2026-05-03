@@ -12,7 +12,7 @@ Living TODO list for the consolidated `ai/claude` skill. Crossed off as shipped.
 - [x] Consolidate `inference/claude/readme.md` + `inference/anthropic-api/readme.md` → `ai/claude/readme.md`
 - [x] Delete old `inference/` category (also moved ollama + openrouter to `ai/`)
 - [x] **`claude_code.list_models` works end-to-end** — OAuth token from keychain → `/v1/models` → 9 models. Subscription-based, no API key. First-class CLI support.
-- [ ] **Rename `op_` prefix on web operations?** `claude_web.py` has `op_list_conversations`, `op_get_conversation`, etc. Other skills use bare names (`search`, `read_webpage`). Decide whether to strip `op_` for consistency.
+- [x] **Rename `op_` prefix on web operations.** Done 2026-05-04 — bulk sed across the whole skills tree (excluding 1Password's `"op_*"` JSON keys). `op_get_conversation` → `get_conversation`, etc.
 - [ ] **Verify two `provides: llm` declarations work.** `claude_api.chat` and `claude_code.chat` both `@provides(llm)` from the same skill. Engine should treat them as separate providers of the same capability. Test end-to-end once MCP routing is wired up.
 - [ ] **Don't hardcode `ANTHROPIC_VERSION`** — extract it from the Claude Code installation (binary resource or config file) at runtime so it stays current when Claude Code updates.
 - [ ] **Make Claude Code an OAuth provider for Claude** — parallel to how Mimestream is an OAuth provider for Google. When present, the `api` connection should be able to auth via Claude Code's keychain token instead of requiring a separate API key.
@@ -64,7 +64,7 @@ When that lands, the local-state ops get implemented in `claude_code.py`:
 - [ ] **Standardize snake_case for Python files** — add convention to
       `docs/src/content/docs/skills.md`. All `.py` files in skills should be
       `snake_case.py` (not `kebab-case.py`). Current codebase is mixed.
-- [ ] **Move `web_read` provides** — `op_get_conversation` currently has
+- [ ] **Move `web_read` provides** — `get_conversation` currently has
       `@provides(web_read, urls=["claude.ai/chat/*", "www.claude.ai/chat/*"])`.
       Verify the URL patterns still match after the skill rename.
 - [ ] **Install MCP into Claude Code** — `~/.claude.json` MCP config editing, matching
